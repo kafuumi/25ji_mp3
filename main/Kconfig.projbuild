@@ -1,0 +1,21 @@
+menu "Custom Config"
+
+    menu "SD Card Config"
+        choice SD_CARD_MODE
+            bool
+            default SD_CARD_SPI_MODE
+            prompt "SD card running mode"
+
+        config SD_CARD_SDIO_MODE
+            bool "SDIO"
+
+        config SD_CARD_SPI_MODE
+            bool "SPI"
+
+        endchoice
+
+        config SKIP_CARD_TEST
+            bool "skip sd card test"
+            default false
+    endmenu
+endmenu

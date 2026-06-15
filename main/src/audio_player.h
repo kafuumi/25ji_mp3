@@ -3,4 +3,8 @@
 
 #include "esp_err.h"
 
-#endif // _AUDIO_PALYER_H_
+esp_err_t ao_init();
+
+void ao_sin_test();
+
+#endif // _AUDIO_PLAYER_H_

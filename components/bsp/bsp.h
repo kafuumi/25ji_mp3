@@ -1,6 +1,9 @@
 #if !defined(_BSP_H_)
 #define _BSP_H_
 
+#include "esp_err.h"
+#include <stdbool.h>
+
 /*
  * I2C PIN DEFINITION
  */
@@ -32,5 +35,9 @@
  */
 #define BSP_PIN_BTN_PREV GPIO_NUM_5
 #define BSP_PIN_BTN_NEXT GPIO_NUM_6
+
+esp_err_t bsp_init();
+
+esp_err_t bsp_audio_mute(bool mute);
 
 #endif // _BSP_H_

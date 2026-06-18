@@ -71,6 +71,7 @@ static esp_err_t element_task_run(amp_element_handle_t *el) {
 esp_err_t amp_controller_init(amp_controller_handle_t **controller) {
     amp_controller_handle_t *c = malloc(sizeof(amp_controller_handle_t));
     STAILQ_INIT(&(c->el_list));
+    memset(&(c->rb_list), 0, sizeof(c->rb_list));
     *controller = c;
     return ESP_OK;
 }
@@ -80,7 +81,7 @@ void amp_controller_deinit(amp_controller_handle_t *controller) {
         free(controller);
 }
 
-amp_element_handle_t *amp_element_setup(void *obj, amp_element_interface_t *intf,
+amp_element_handle_t *amp_element_setup(void *obj, const amp_element_interface_t *intf,
                                         const struct amp_element_task_cfg *cfg) {
     amp_element_handle_t *el = malloc(sizeof(amp_element_handle_t));
     el->name = strdup(cfg->name);

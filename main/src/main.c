@@ -4,7 +4,6 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
-#include "amp/controller.h"
 #include "bsp.h"
 #include "bsp_sd_card.h"
 #include "ui.h"
@@ -40,9 +39,13 @@ esp_err_t i2c_bus_init() {
 
 extern void bench_sin_vs_sinf();
 
+extern void audio_test();
+
 void app_main(void) {
     printf("esp32s3 startup, enter app_main()\n");
     esp_log_level_set("U8G2_PORT", ESP_LOG_WARN);
+    bsp_init();
+    bsp_audio_mute(false);
     // esp_err_t err = bsp_sd_card_init();
     // if (err != ESP_OK) {
     //     ESP_LOGE(TAG, "bsp init sd card fail: %s", esp_err_to_name(err));
@@ -61,7 +64,7 @@ void app_main(void) {
     // }
 
     // aht20_init(i2c_bus_handle);
-    amp_controller_run();
+    audio_test();
     // while (true) {
     //   float temp, humi;
     //   err = aht20_read_temperature_humidity(&temp, &humi);

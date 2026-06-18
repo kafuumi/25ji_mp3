@@ -1,17 +1,11 @@
 
 #include "esp_log.h"
 
-#include "amp/controller.h"
 #include "amp/i2s_writer.h"
 #include "bsp.h"
+#include "portmacro.h"
 #include "utils/esp_utils.h"
-
-#define AUDIO_OUTPUT_DEFAULT_ARGS()                                                                                    \
-    {                                                                                                                  \
-        .sample_rate = 44100,                                                                                          \
-        .slog_bit_width = I2S_SLOT_BIT_WIDTH_16BIT,                                                                    \
-        .slot_mode = I2S_SLOT_MODE_STEREO,                                                                             \
-    }
+#include <stdbool.h>
 
 static const char *TAG = "i2s_writer";
 
@@ -21,23 +15,6 @@ struct i2s_writer {
     RingbufHandle_t rb_in;
     i2s_chan_handle_t tx_chan;
 };
-
-static esp_err_t _i2s_driver_reconfig(i2s_writer_handle_t *writer, struct i2s_writer_output_args *args) {
-    i2s_chan_handle_t chan = writer->tx_chan;
-    if (writer->chan_enable) {
-        i2s_channel_disable(chan);
-    }
-    esp_err_t err = ESP_OK;
-    if (args->sample_rate > 0) {
-        i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(args->sample_rate);
-        err = i2s_channel_reconfig_std_clock(chan, &clk_cfg);
-    }
-    if (args->slog_bit_width >= 0) {
-        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slog_bit_width, args->slot_mode);
-        err = i2s_channel_reconfig_std_slot(chan, &slot_cfg);
-    }
-    return ESP_OK;
-}
 
 static esp_err_t _i2s_driver_init(i2s_writer_handle_t *ctx, struct i2s_writer_output_args *args) {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(ctx->i2s_port, I2S_ROLE_MASTER);
@@ -87,7 +64,7 @@ static void i2s_writer_task(void *args) {
     RingbufHandle_t rb = writer->rb_in;
     size_t data_size;
     while (true) {
-        void *item = xRingbufferReceive(rb, &data_size, pdMS_TO_TICKS(1000));
+        void *item = xRingbufferReceive(rb, &data_size, portMAX_DELAY);
         if (data_size == 0) {
             continue;
         }
@@ -95,10 +72,8 @@ static void i2s_writer_task(void *args) {
             ESP_LOGW(TAG, "no item");
             continue;
         }
-        ESP_LOGI(TAG, "read data from rb, size %ld, ptr: %p", data_size, item);
-        // i2s_writer_send_pcm(writer, item, data_size);
+        i2s_writer_send_pcm(writer, item, data_size);
         vRingbufferReturnItem(rb, item);
-        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -122,10 +97,10 @@ esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t **writ
     w->rb_in = cfg->rb_in;
 
     struct i2s_writer_output_args args = AUDIO_OUTPUT_DEFAULT_ARGS();
-    // esp_err_t err = _i2s_driver_init(w, &args);
-    // if (ESP_OK != err) {
-    //     return err;
-    // }
+    esp_err_t err = _i2s_driver_init(w, &args);
+    if (ESP_OK != err) {
+        return err;
+    }
     *writer = w;
     ESP_LOGD(TAG, "initialize i2s writer success");
     return ESP_OK;
@@ -181,8 +156,25 @@ esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t *writer, const uint8_t *data, 
     return ESP_OK;
 }
 
+esp_err_t i2s_writer_audio_config(i2s_writer_handle_t *writer, struct i2s_writer_output_args *args) {
+    i2s_chan_handle_t chan = writer->tx_chan;
+    if (writer->chan_enable) {
+        i2s_channel_disable(chan);
+    }
+    esp_err_t err = ESP_OK;
+    if (args->sample_rate > 0) {
+        i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(args->sample_rate);
+        err = i2s_channel_reconfig_std_clock(chan, &clk_cfg);
+    }
+    if (args->slog_bit_width >= 0) {
+        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slog_bit_width, args->slot_mode);
+        err = i2s_channel_reconfig_std_slot(chan, &slot_cfg);
+    }
+    return ESP_OK;
+}
+
 void i2s_writer_element_deinit(void *args) { i2s_writer_deinit((i2s_writer_handle_t *)args); }
 
-amp_element_handle_t *i2s_writer_to_el(i2s_writer_handle_t *writer) {
-    return amp_element_setup(writer, (amp_element_interface_t *)&i2s_amp_element_interface, NULL);
+const amp_element_interface_t *i2s_writer_el_interface() {
+    return &(i2s_amp_element_interface);
 }

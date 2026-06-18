@@ -1,4 +1,4 @@
-set(SRC_FILES "bsp_sd_card.c")
+set(SRC_FILES "bsp.c" "bsp_sd_card.c")
 
 idf_component_register(SRCS ${SRC_FILES}
         INCLUDE_DIRS "."

@@ -4,10 +4,9 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 
-#include "audio_player.h"
+#include "amp/controller.h"
 #include "bsp.h"
 #include "bsp_sd_card.h"
-#include "freertos/idf_additions.h"
 #include "ui.h"
 
 #define PORT_I2C I2C_NUM_0
@@ -44,27 +43,25 @@ extern void bench_sin_vs_sinf();
 void app_main(void) {
     printf("esp32s3 startup, enter app_main()\n");
     esp_log_level_set("U8G2_PORT", ESP_LOG_WARN);
-    esp_err_t err = bsp_sd_card_init();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "bsp init sd card fail: %s", esp_err_to_name(err));
-        return;
-    }
-    err = i2c_bus_init();
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "new i2c master bus fail: %s", esp_err_to_name(err));
-        return;
-    }
+    // esp_err_t err = bsp_sd_card_init();
+    // if (err != ESP_OK) {
+    //     ESP_LOGE(TAG, "bsp init sd card fail: %s", esp_err_to_name(err));
+    //     return;
+    // }
+    // err = i2c_bus_init();
+    // if (ESP_OK != err) {
+    //     ESP_LOGE(TAG, "new i2c master bus fail: %s", esp_err_to_name(err));
+    //     return;
+    // }
 
-    err = ui_init(i2c_bus_handle);
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "init ui fail: %s", esp_err_to_name(err));
-        return;
-    }
+    // err = ui_init(i2c_bus_handle);
+    // if (ESP_OK != err) {
+    //     ESP_LOGE(TAG, "init ui fail: %s", esp_err_to_name(err));
+    //     return;
+    // }
 
-    aht20_init(i2c_bus_handle);
-    ao_init();
-    // ao_sin_test();
-    bench_sin_vs_sinf();
+    // aht20_init(i2c_bus_handle);
+    amp_controller_run();
     // while (true) {
     //   float temp, humi;
     //   err = aht20_read_temperature_humidity(&temp, &humi);

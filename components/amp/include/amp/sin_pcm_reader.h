@@ -13,7 +13,7 @@ enum sin_pcm_bit_width {
 
 enum sin_pcm_channel {
     PCM_CHANNEL_MONO = 1,
-    PCM_CHANNEL_STERO = 2,
+    PCM_CHANNEL_STEREO = 2,
 };
 
 struct sin_pcm_audio_args {

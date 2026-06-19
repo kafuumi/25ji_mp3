@@ -25,8 +25,8 @@ void audio_test() {
 
     struct sin_pcm_audio_args audio_args = {
         .bit_width = PCM_BIT_WIDTH_16BIT,
-        .channel = PCM_CHANNEL_STERO,
-        .freq = 740,
+        .channel = PCM_CHANNEL_STEREO,
+        .freq = 440,
         .sample_rate = 44100,
         .volume = 60,
     };
@@ -48,4 +48,7 @@ void audio_test() {
     amp_controller_append_writer(controller, (amp_element_handle_t *)i2s_writer, i2s_writer_el_interface(), &el_cfg);
 
     amp_controller_run(controller);
+
+    vTaskDelay(pdMS_TO_TICKS(10 * 1000));
+    amp_controller_pause(controller);
 }

@@ -4,6 +4,7 @@
 
 #include "amp/i2s_writer.h"
 #include "bsp.h"
+#include "element_priv.h"
 #include "freertos/ringbuf.h"
 #include "utils/esp_utils.h"
 
@@ -63,8 +64,26 @@ cleanup:
 static void i2s_writer_task(void *args) {
     i2s_writer_handle_t *writer = (i2s_writer_handle_t *)args;
     RingbufHandle_t rb = writer->rb_in;
+    amp_dashboard_handle_t *dashboard = writer->el_entry.dashboard;
+
     size_t data_size;
+    uint32_t task_notify = 0;
+    int notify_wait = 0;
     while (true) {
+        if (xTaskNotifyWait(0, ULLONG_MAX, &task_notify, notify_wait) == pdTRUE) {
+            ESP_LOGI(TAG, "receive notify %d", task_notify);
+            if (task_notify == AMP_EVENT_ACTION_PAUSE) {
+                notify_wait = pdMS_TO_TICKS(100);
+                continue;
+            }
+        } else {
+            notify_wait = 0;
+        }
+        if (amp_dashboard_load_state(dashboard) != AMP_STATE_INIT) {
+            notify_wait = pdMS_TO_TICKS(100);
+            continue;
+        }
+
         void *item = xRingbufferReceive(rb, &data_size, portMAX_DELAY);
         if (data_size == 0) {
             continue;
@@ -83,10 +102,39 @@ static void i2s_writer_set_input(void *args, RingbufHandle_t rb) {
     writer->rb_in = rb;
 }
 
+static void i2s_writer_event_handler_action(void *args, esp_event_base_t base_id, int32_t evt_id, void *event) {
+    i2s_writer_handle_t *writer = args;
+    TaskHandle_t task_handle = writer->el_entry.task;
+    switch (evt_id) {
+    case AMP_EVENT_ACTION_PAUSE:
+        ESP_LOGI(TAG, "receive AMP_EVENT_ACTION_PAUSE event");
+        BaseType_t ret = xTaskNotify(task_handle, (uint32_t)evt_id, eSetBits);
+        if (ret != pdTRUE)
+            ESP_LOGW(TAG, "send AMP_EVENT_ACTION_PAUSE notify fail: %d", ret);
+        else
+            ESP_LOGD(TAG, "send AMP_EVENT_ACTION_PAUSE notify success");
+    }
+}
+
+static esp_err_t i2s_writer_setup_event(void *args, esp_event_loop_handle_t event_bus) {
+    i2s_writer_handle_t *writer = args;
+    esp_err_t err = esp_event_handler_instance_register_with(event_bus, AMP_EVENT_ACTION, ESP_EVENT_ANY_ID,
+                                                             i2s_writer_event_handler_action, writer, NULL);
+    if (ESP_OK != err) {
+        ESP_LOGE(TAG, "register AMP_EVENT_ACTION fail: %s", esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "register AMP_EVENT_ACTION success");
+    // err = esp_event_handler_instance_register(esp_event_base_t event_base, int32_t event_id, esp_event_handler_t
+    // event_handler, void *event_handler_arg, esp_evenft_handler_instance_t *instance)
+    return ESP_OK;
+}
+
 static const amp_element_interface_t i2s_amp_element_interface = {
     .task_run = i2s_writer_task,
     .set_input_rb = i2s_writer_set_input,
     .set_output_rb = NULL,
+    .setup_event_handler = i2s_writer_setup_event,
 };
 
 // #####################################################################

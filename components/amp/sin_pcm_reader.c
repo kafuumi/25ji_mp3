@@ -1,11 +1,13 @@
 
-#include "amp/controller.h"
-#include "esp_err.h"
-#include "esp_log.h"
 #include <math.h>
 
-#include "amp/sin_pcm_reader.h"
+#include "esp_err.h"
+#include "esp_log.h"
 #include "freertos/ringbuf.h"
+
+#include "amp/controller.h"
+#include "amp/sin_pcm_reader.h"
+#include "element_priv.h"
 
 static const char *TAG = "sin_pcm";
 
@@ -34,7 +36,7 @@ static void generate_sin_pcm_16bit(sin_pcm_reader_handle_t *reader, int16_t *buf
         int16_t value = (int16_t)lrintf(sinf(tmp) * amplitude * (args->volume / 100.));
         *buf = value;
         buf++;
-        if (args->channel == PCM_CHANNEL_STERO) {
+        if (args->channel == PCM_CHANNEL_STEREO) {
             // write right channel
             *buf = value;
             buf++;

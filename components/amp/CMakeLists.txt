@@ -1,4 +1,4 @@
-set(SRC_FILES "controller.c" "i2s_writer.c" "sin_pcm_reader.c")
+set(SRC_FILES "controller.c" "i2s_writer.c" "sin_pcm_reader.c" "dashboard.c")
 
 idf_component_register(SRCS ${SRC_FILES}
         INCLUDE_DIRS "include"

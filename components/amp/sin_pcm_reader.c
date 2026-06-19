@@ -1,14 +1,16 @@
 
+#include "amp/controller.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include <math.h>
 
 #include "amp/sin_pcm_reader.h"
-#include "esp_log_config.h"
+#include "freertos/ringbuf.h"
 
 static const char *TAG = "sin_pcm";
 
 struct sin_pcm_reader {
+    AMP_ELEMENT_ENTRY() el_entry;
     int max_amplitude;
     size_t frames_size;
     RingbufHandle_t rb_out;
@@ -56,8 +58,15 @@ static void sin_pcm_reader_task(void *args) {
     }
 }
 
+static void sin_pcm_reader_set_output(void *args, RingbufHandle_t rb) {
+    sin_pcm_reader_handle_t *reader = args;
+    reader->rb_out = rb;
+}
+
 static const amp_element_interface_t sin_pcm_element_interface = {
     .task_run = sin_pcm_reader_task,
+    .set_input_rb = NULL,
+    .set_output_rb = sin_pcm_reader_set_output,
 };
 
 // #####################################################################

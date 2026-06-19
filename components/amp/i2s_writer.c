@@ -1,15 +1,16 @@
 
+#include "amp/controller.h"
 #include "esp_log.h"
 
 #include "amp/i2s_writer.h"
 #include "bsp.h"
-#include "portmacro.h"
+#include "freertos/ringbuf.h"
 #include "utils/esp_utils.h"
-#include <stdbool.h>
 
 static const char *TAG = "i2s_writer";
 
 struct i2s_writer {
+    AMP_ELEMENT_ENTRY() el_entry;
     bool chan_enable;
     i2s_port_t i2s_port;
     RingbufHandle_t rb_in;
@@ -77,13 +78,20 @@ static void i2s_writer_task(void *args) {
     }
 }
 
-// #####################################################################
-// ####################### i2s_writer public ###########################
-// #####################################################################
+static void i2s_writer_set_input(void *args, RingbufHandle_t rb) {
+    i2s_writer_handle_t *writer = args;
+    writer->rb_in = rb;
+}
 
 static const amp_element_interface_t i2s_amp_element_interface = {
     .task_run = i2s_writer_task,
+    .set_input_rb = i2s_writer_set_input,
+    .set_output_rb = NULL,
 };
+
+// #####################################################################
+// ####################### i2s_writer public ###########################
+// #####################################################################
 
 esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t **writer) {
     i2s_writer_handle_t *w = malloc(sizeof(i2s_writer_handle_t));
@@ -175,6 +183,4 @@ esp_err_t i2s_writer_audio_config(i2s_writer_handle_t *writer, struct i2s_writer
 
 void i2s_writer_element_deinit(void *args) { i2s_writer_deinit((i2s_writer_handle_t *)args); }
 
-const amp_element_interface_t *i2s_writer_el_interface() {
-    return &(i2s_amp_element_interface);
-}
+const amp_element_interface_t *i2s_writer_el_interface() { return &(i2s_amp_element_interface); }

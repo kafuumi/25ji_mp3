@@ -10,7 +10,7 @@ esp_err_t amp_dashboard_init(amp_dashboard_handle_t **dashboard) {
     if (!dash) {
         return ESP_ERR_NO_MEM;
     }
-    dash->state = AMP_STATE_INIT;
+    dash->state = AMP_STATE_READY;
     *dashboard = dash;
     return ESP_OK;
 }

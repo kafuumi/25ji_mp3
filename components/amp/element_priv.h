@@ -8,6 +8,21 @@
 #include "amp/dashboard.h"
 #include "amp/element.h"
 
+// 外部操作事件
+ESP_EVENT_DECLARE_BASE(AMP_EVENT_ACTION);
+
+enum amp_event_action_id {
+    AMP_EVENT_ACTION_PLAY = 1,   // Ready => Playing
+    AMP_EVENT_ACTION_PAUSE = 2,  // Playing => Paused
+    AMP_EVENT_ACTION_RESUME = 3, // Paused => Playing
+    AMP_EVENT_ACTION_RESET = 4,  // any => Ready
+};
+
+// audio output arguments changed
+struct amp_event_report_audio_args {
+    int sample_rate;
+};
+
 struct amp_element {
     char *name;
     int stack_size;

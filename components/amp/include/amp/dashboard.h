@@ -14,8 +14,10 @@ extern "C" {
  */
 enum amp_state {
     AMP_STATE_INVALID, /*!< Invalid / unknown state */
-    AMP_STATE_INIT,    /*!< Initialized, not running */
+    AMP_STATE_READY,   /*!< Initialized, not playing */
+    AMP_STATE_PLAYING, /* playing music */
     AMP_STATE_PAUSE,   /* pause state */
+    AMP_STATE_FATAL,   /* any error acour */
 };
 
 /**

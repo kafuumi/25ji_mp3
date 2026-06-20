@@ -12,6 +12,16 @@
 
 #define DEFAULT_FRAMES_SIZE 1024
 
+#define CONTROLLER_ACTION_DO(controller, state, action, tag, log_fmt, ...)                                             \
+    do {                                                                                                               \
+        enum amp_state old = amp_dashboard_swap_status((controller)->dashboard, state);                                \
+        if (old == state) {                                                                                            \
+            ESP_LOGW(tag, log_fmt, ##__VA_ARGS__);                                                                     \
+            return ESP_OK;                                                                                             \
+        }                                                                                                              \
+        return amp_controller_send_action_event((controller), action);                                                 \
+    } while (0)
+
 static const char *TAG = "amp_controller";
 
 ESP_EVENT_DEFINE_BASE(AMP_EVENT_ACTION);
@@ -79,8 +89,9 @@ typedef STAILQ_HEAD(amp_el_head, amp_element) amp_element_list_head_t;
 struct amp_controller {
     TaskHandle_t self;
     esp_event_loop_handle_t event_bus;
-    amp_element_list_head_t el_list;
+    esp_event_handler_instance_t report_evt;
     amp_dashboard_handle_t *dashboard;
+    amp_element_list_head_t el_list;
     rb_list_t rb_list;
 };
 
@@ -94,6 +105,10 @@ static esp_err_t inline element_task_run(amp_element_handle_t *el) {
         }
     }
     return ESP_FAIL;
+}
+
+static void amp_controller_handle_report_event(void *args, esp_event_base_t base_evt, int32_t evt_id, void *evt) {
+    // TODO
 }
 
 static inline esp_err_t amp_controller_append(amp_controller_handle_t *controller, amp_element_handle_t *el,
@@ -179,7 +194,28 @@ static inline esp_err_t amp_controller_setup_event(amp_controller_handle_t *cont
         ESP_LOGE(TAG, "create esp event loop fail: %s", esp_err_to_name(err));
         return err;
     }
+    // register REPORT event handler
+    err = esp_event_handler_instance_register_with(event_loop, AMP_EVENT_REPORT, ESP_EVENT_ANY_ID,
+                                                   amp_controller_handle_report_event, controller,
+                                                   &controller->report_evt);
+    if (ESP_OK != err) {
+        ESP_LOGE(TAG, "register REPORT event handler fail: %s", esp_err_to_name(err));
+        esp_event_loop_delete(event_loop);
+        return err;
+    }
     controller->event_bus = event_loop;
+    return ESP_OK;
+}
+
+static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t *controller,
+                                                         enum amp_event_action_id evt) {
+    // send event
+    esp_err_t err = esp_event_post_to(controller->event_bus, AMP_EVENT_ACTION, evt, 0, 0, pdMS_TO_TICKS(3000));
+    if (ESP_OK != err) {
+        ESP_LOGE(TAG, "send action event (%d) fail: %s", evt, esp_err_to_name(err));
+        return err;
+    }
+    ESP_LOGI(TAG, "send action event (%d) success");
     return ESP_OK;
 }
 
@@ -256,15 +292,33 @@ esp_err_t amp_controller_run(amp_controller_handle_t *controller) {
     return ESP_OK;
 }
 
-esp_err_t amp_controller_pause(amp_controller_handle_t *controller) {
-    amp_dashboard_handle_t *dashboard = controller->dashboard;
-    enum amp_state old = amp_dashboard_swap_status(dashboard, AMP_STATE_PAUSE);
-    if (old == AMP_STATE_PAUSE) {
-        ESP_LOGW(TAG, "amp already pause state");
-        return ESP_OK;
+esp_err_t amp_controller_action_reset(amp_controller_handle_t *controller) {
+    CONTROLLER_ACTION_DO(controller, AMP_STATE_READY, AMP_EVENT_ACTION_RESET, TAG, "amp already READY state");
+}
+
+esp_err_t amp_controller_action_play(amp_controller_handle_t *controller) {
+    CONTROLLER_ACTION_DO(controller, AMP_STATE_PLAYING, AMP_EVENT_ACTION_PLAY, TAG, "amp already PLAYING state");
+}
+
+esp_err_t amp_controller_action_pause(amp_controller_handle_t *controller) {
+    CONTROLLER_ACTION_DO(controller, AMP_STATE_PAUSE, AMP_EVENT_ACTION_PAUSE, TAG, "amp already PAUSED state");
+}
+
+esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t *controller, bool *to_play) {
+    enum amp_state state = amp_dashboard_load_state(controller->dashboard);
+    if (state == AMP_STATE_PAUSE || state == AMP_STATE_READY) {
+        if (to_play)
+            *to_play = true;
+        return amp_controller_action_play(controller);
+    } else if (state == AMP_STATE_PLAYING) {
+        if (to_play)
+            *to_play = false;
+        return amp_controller_action_pause(controller);
+    } else if (state == AMP_STATE_FATAL) {
+        ESP_LOGW(TAG, "amp state is FATAL, should reset first");
+        return ESP_ERR_INVALID_STATE;
+    } else {
+        ESP_LOGW(TAG, "amp state(%d) is invalid", state);
+        return ESP_ERR_INVALID_STATE;
     }
-    // send event
-    esp_event_loop_handle_t event_bus = controller->event_bus;
-    esp_err_t err = esp_event_post_to(event_bus, AMP_EVENT_ACTION, AMP_EVENT_ACTION_PAUSE, 0, 0, portMAX_DELAY);
-    return err;
 }

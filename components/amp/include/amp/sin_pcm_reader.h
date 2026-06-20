@@ -27,7 +27,6 @@ struct sin_pcm_audio_args {
 struct sin_pcm_reader_cfg {
     int max_amplitude;
     size_t frames_size;
-    RingbufHandle_t rb_out;
 };
 
 typedef struct sin_pcm_reader sin_pcm_reader_handle_t;

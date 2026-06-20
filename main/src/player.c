@@ -17,7 +17,7 @@ void audio_test() {
 
     sin_pcm_reader_handle_t *pcm_reader;
     struct sin_pcm_reader_cfg pcm_cfg = {
-        .frames_size = 1024,
+        .frames_size = 128,
         .max_amplitude = 3000,
     };
     err = sin_pcm_reader_init(&pcm_cfg, &pcm_reader);
@@ -39,7 +39,7 @@ void audio_test() {
     struct amp_element_task_cfg el_cfg = {
         .name = "sin_pcm",
         .stack_size = 4096,
-        .rb_out_size = 4096,
+        .rb_out_size = 1024,
     };
 
     amp_controller_append_reader(controller, (amp_element_handle_t *)pcm_reader, sin_pcm_reader_el_interface(),
@@ -49,6 +49,9 @@ void audio_test() {
 
     amp_controller_run(controller);
 
+    vTaskDelay(pdMS_TO_TICKS(3 * 1000));
+    amp_controller_action_play(controller);
+
     vTaskDelay(pdMS_TO_TICKS(10 * 1000));
-    amp_controller_pause(controller);
+    amp_controller_action_pause(controller);
 }

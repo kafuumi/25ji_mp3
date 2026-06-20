@@ -61,39 +61,54 @@ cleanup:
     return err;
 }
 
+static bool i2s_writer_do_event(i2s_writer_handle_t *writer, TickType_t wait_time) {
+    uint32_t notify = 0;
+    // xxxx-xxxx xxxx-xxxx xxxx-xxxx xxxx-xxxx
+    // undefined undefined   REPORT   ACTION
+    // ignore ACTION event
+    if (xTaskNotifyWait(0xff, ULONG_MAX, &notify, wait_time)) {
+        notify >>= 8;
+        ESP_LOGI(TAG, "receive event notify: %d", notify);
+    }
+    enum amp_state state = amp_dashboard_load_state(writer->el_entry.dashboard);
+    if (notify == 0) {
+        // no event, check state
+        return state == AMP_STATE_PLAYING;
+    }
+    // todo: handle REPORT event
+    return state == AMP_STATE_PLAYING;
+}
+
 static void i2s_writer_task(void *args) {
     i2s_writer_handle_t *writer = (i2s_writer_handle_t *)args;
     RingbufHandle_t rb = writer->rb_in;
-    amp_dashboard_handle_t *dashboard = writer->el_entry.dashboard;
+    assert(rb);
+    const TickType_t max_wait = pdMS_TO_TICKS(1000);
 
     size_t data_size;
-    uint32_t task_notify = 0;
-    int notify_wait = 0;
+    TickType_t notify_wait = 0;
     while (true) {
-        if (xTaskNotifyWait(0, ULLONG_MAX, &task_notify, notify_wait) == pdTRUE) {
-            ESP_LOGI(TAG, "receive notify %d", task_notify);
-            if (task_notify == AMP_EVENT_ACTION_PAUSE) {
-                notify_wait = pdMS_TO_TICKS(100);
-                continue;
-            }
-        } else {
-            notify_wait = 0;
-        }
-        if (amp_dashboard_load_state(dashboard) != AMP_STATE_INIT) {
+        bool should_send = i2s_writer_do_event(writer, notify_wait);
+        if (!should_send) {
+            // wait notify
             notify_wait = pdMS_TO_TICKS(100);
             continue;
         }
-
-        void *item = xRingbufferReceive(rb, &data_size, portMAX_DELAY);
-        if (data_size == 0) {
-            continue;
+        notify_wait = 0;
+        // write data to i2s
+        {
+            void *item = xRingbufferReceive(rb, &data_size, max_wait);
+            if (data_size == 0) {
+                continue;
+            }
+            if (item == NULL) {
+                ESP_LOGW(TAG, "ringbuf is empty, no item is received");
+                continue;
+            }
+            // write to i2s
+            i2s_writer_send_pcm(writer, item, data_size);
+            vRingbufferReturnItem(rb, item);
         }
-        if (item == NULL) {
-            ESP_LOGW(TAG, "no item");
-            continue;
-        }
-        i2s_writer_send_pcm(writer, item, data_size);
-        vRingbufferReturnItem(rb, item);
     }
 }
 
@@ -102,24 +117,27 @@ static void i2s_writer_set_input(void *args, RingbufHandle_t rb) {
     writer->rb_in = rb;
 }
 
-static void i2s_writer_event_handler_action(void *args, esp_event_base_t base_id, int32_t evt_id, void *event) {
+static void i2s_writer_report_event_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *event) {
     i2s_writer_handle_t *writer = args;
     TaskHandle_t task_handle = writer->el_entry.task;
+    uint32_t notify = 0;
+    // TODO
     switch (evt_id) {
-    case AMP_EVENT_ACTION_PAUSE:
-        ESP_LOGI(TAG, "receive AMP_EVENT_ACTION_PAUSE event");
-        BaseType_t ret = xTaskNotify(task_handle, (uint32_t)evt_id, eSetBits);
-        if (ret != pdTRUE)
-            ESP_LOGW(TAG, "send AMP_EVENT_ACTION_PAUSE notify fail: %d", ret);
-        else
-            ESP_LOGD(TAG, "send AMP_EVENT_ACTION_PAUSE notify success");
+    default:
+        return;
     }
+    BaseType_t ret = xTaskNotify(task_handle, notify, eSetValueWithOverwrite);
+    if (ret != pdTRUE)
+        ESP_LOGW(TAG, "send AMP_EVENT_ACTION_PAUSE notify fail: %d", ret);
+    else
+        ESP_LOGD(TAG, "send AMP_EVENT_ACTION_PAUSE notify success");
 }
 
 static esp_err_t i2s_writer_setup_event(void *args, esp_event_loop_handle_t event_bus) {
     i2s_writer_handle_t *writer = args;
-    esp_err_t err = esp_event_handler_instance_register_with(event_bus, AMP_EVENT_ACTION, ESP_EVENT_ANY_ID,
-                                                             i2s_writer_event_handler_action, writer, NULL);
+    // register event report
+    esp_err_t err = esp_event_handler_instance_register_with(event_bus, AMP_EVENT_REPORT, ESP_EVENT_ANY_ID,
+                                                             i2s_writer_report_event_handler, writer, NULL);
     if (ESP_OK != err) {
         ESP_LOGE(TAG, "register AMP_EVENT_ACTION fail: %s", esp_err_to_name(err));
         return err;

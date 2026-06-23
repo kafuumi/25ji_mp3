@@ -1,4 +1,4 @@
-file(GLOB SRC_FILES "./*.c")
+set(SRC_FILES "sds.c")
 
 message(STATUS "sds version is 2.0.0")
 

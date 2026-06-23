@@ -4,4 +4,5 @@ set(SRC_FILES "controller.c" "i2s_writer.c"
 
 idf_component_register(SRCS ${SRC_FILES}
         INCLUDE_DIRS "include"
-        REQUIRES esp_driver_gpio esp_driver_i2s esp_ringbuf esp_event bsp utils sds)
+        REQUIRES esp_event esp_ringbuf esp_driver_i2s
+        PRIV_REQUIRES esp_driver_gpio esp_audio_codec bsp utils sds)

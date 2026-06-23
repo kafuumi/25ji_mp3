@@ -19,30 +19,31 @@ struct audio_file_source {
 
 typedef TAILQ_HEAD(audio_file_source_head, audio_file_source) audio_file_source_head_t;
 
-struct audio_file_list {
+struct file_reader {
     sds base;
     size_t size;
-    struct audio_file_source *cur;
     audio_file_source_head_t file_list;
 };
 
-static esp_err_t audio_file_next(struct audio_file_list *fl) {
+bool file_reader_next(file_reader_handle_t *fl, struct audio_file_source **cur) {
     if (fl->size == 0) {
         ESP_LOGE(TAG, "audio file list is empty");
-        return ESP_ERR_NOT_FOUND;
+        return false;
     }
-    if (fl->cur == NULL)
-        fl->cur = TAILQ_FIRST(&fl->file_list);
+    struct audio_file_source *current = *cur;
+    if (current == NULL)
+        current = TAILQ_FIRST(&fl->file_list);
     else
-        fl->cur = TAILQ_NEXT(fl->cur, tailq_entry);
+        current = TAILQ_NEXT(current, tailq_entry);
 
-    if (fl->cur == NULL)
+    if (current == NULL)
         ESP_LOGW(TAG, "current audio file node is last");
 
-    return ESP_OK;
+    *cur = current;
+    return true;
 }
 
-static esp_err_t audio_file_load(struct audio_file_list *fl, const char *dir) {
+esp_err_t file_reader_read_dir(file_reader_handle_t *fl, const char *dir) {
     DIR *dp = opendir(dir);
     if (dp == NULL) {
         ESP_LOGE(TAG, "open dir %s fail: %d(%s)", dir, errno, strerror(errno));
@@ -54,7 +55,7 @@ static esp_err_t audio_file_load(struct audio_file_list *fl, const char *dir) {
     sds full_path = sdsempty();
     int dir_count = 0;
     while ((dir_entry = readdir(dp)) != NULL) {
-        if (dir_entry->d_namlen == 0 || dir_entry->d_name[0] == '.')
+        if (dir_entry->d_name[0] == '.')
             continue; /* ignore */
 
         sdsclear(full_path);

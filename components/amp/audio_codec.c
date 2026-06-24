@@ -47,6 +47,8 @@ static void audio_codec_task_run(void *args) {
     ringbuf_handle_t rb_out = decoder->rb_out;
     esp_audio_simple_dec_handle_t dec = decoder->decoder;
     assert(rb_in && rb_out);
+    assert(dec);
+
     size_t rb_out_size = rb_get_size(rb_out);
     if (rb_out_size) {
         ESP_LOGI(TAG, "ringbuf out max size is %ld", rb_out_size);
@@ -59,42 +61,59 @@ static void audio_codec_task_run(void *args) {
     uint8_t *out_buf = amp_malloc(sizeof(uint8_t) * out_buf_size);
 
     TickType_t read_wait = pdMS_TO_TICKS(100);
-    TickType_t write_wait = pdMS_TO_TICKS(100);
+    TickType_t write_wait = portMAX_DELAY;
 
+    esp_audio_simple_dec_raw_t raw_dec = {0};
+    esp_audio_simple_dec_out_t out_dec = {0};
     esp_err_t err;
+
     while (true) {
         size_t in_size = rb_read(rb_in, (char *)in_buf, in_buf_size, read_wait);
-        if (in_size == 0) {
+        if (in_size <= 0) {
+            ESP_LOGE(TAG, "read data from ringbuf fail: %d", in_size);
             continue;
         }
-        esp_audio_simple_dec_raw_t raw = {
-            .buffer = in_buf,
-            .len = in_size,
-            .eos = false,
-        };
-        esp_audio_simple_dec_out_t out = {
-            .buffer = out_buf,
-            .len = out_buf_size,
-        };
-        while (raw.len > 0) {
-            err = esp_audio_simple_dec_process(dec, &raw, &out);
-            if (ESP_AUDIO_ERR_OK == err) {
-                ESP_LOGI(TAG, "decode success, size: %d, consumed: %d", out.decoded_size, raw.consumed);
-                if (out.decoded_size > 0) {
-                    rb_write(rb_out, (char *)out_buf, out.decoded_size, write_wait);
+
+        raw_dec.buffer = in_buf;
+        raw_dec.len = in_size;
+        raw_dec.eos = false;
+        raw_dec.frame_recover = 0;
+
+        while (raw_dec.len > 0) {
+            // reset output and input
+            raw_dec.consumed = 0;
+            out_dec.buffer = out_buf;
+            out_dec.len = out_buf_size;
+            out_dec.needed_size = out_dec.decoded_size = 0;
+
+            err = esp_audio_simple_dec_process(dec, &raw_dec, &out_dec);
+            if (ESP_AUDIO_ERR_BUFF_NOT_ENOUGH == err) {
+                ESP_LOGW(TAG, "output buffer not enough, try resize");
+                size_t ns = out_dec.needed_size + out_buf_size;
+                void *buf = amp_realloc(out_buf, ns);
+                if (!buf) {
+                    ESP_LOGW(TAG, "no enough memory, need size: %d bytes", ns);
+                    // todo: error handle
+                    continue;
                 }
-                raw.buffer += raw.consumed;
-                raw.len -= raw.consumed;
-                continue;
-            } else if (ESP_AUDIO_ERR_BUFF_NOT_ENOUGH == err) {
-                ESP_LOGW(TAG, "buffer not enough");
-                size_t ns = out.needed_size + out_buf_size;
-                out_buf = amp_realloc(out_buf, ns);
-                out.buffer = out_buf;
-                out.len = ns;
+                ESP_LOGI(TAG, "realloc output buffer success, new size: %d bytes", ns);
+                out_buf = buf;
                 out_buf_size = ns;
                 continue;
             }
+            ESP_LOGI(TAG, "decode success, consumed: %d, decodec_size: %d", raw_dec.consumed, out_dec.decoded_size);
+            if (out_dec.decoded_size > 0) {
+                // write data
+                err = rb_write(rb_out, (char *)out_buf, out_dec.decoded_size, write_wait);
+                if (err < 0) {
+                    ESP_LOGW(TAG, "write pcm data to ringbuf fail: %d", err);
+                    continue;
+                }
+            }
+
+            raw_dec.buffer += raw_dec.consumed;
+            raw_dec.len -= raw_dec.consumed;
+            continue;
         }
     }
 

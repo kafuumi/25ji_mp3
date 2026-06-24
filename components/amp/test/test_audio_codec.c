@@ -25,10 +25,7 @@ static void read_file_data_task(void *args) {
     uint8_t *buf = malloc(sizeof(uint8_t) * buf_size);
     while (true) {
         size_t rc = fread(buf, sizeof(uint8_t), buf_size, fp);
-        if (rc < 0) {
-            ESP_LOGE(TAG, "fread %s fail: %s", filename, strerror(errno));
-            break;
-        } else if (rc == 0) {
+        if (rc == 0) {
             ESP_LOGI(TAG, "fread %s finished", filename);
             break;
         }
@@ -63,10 +60,16 @@ TEST_CASE("Audio Codec run codec task", "[amp][audio_codec]") {
     TaskHandle_t read_task;
     xTaskCreate(read_file_data_task, "read", 4096, rb_in, 1, &read_task);
 
-    while (true) {
-        size_t item_size = 0;
-        // void *item = xRingbufferReceive(rb_out, &item_size, portMAX_DELAY);
+    void *msg_buf = malloc(sizeof(uint8_t) * 1024);
+    TickType_t wait_time = pdMS_TO_TICKS(3000);
+    bool stop = false;
+    while (!stop) {
+        size_t item_size = rb_read(rb_out, msg_buf, 1024, wait_time);
         // ESP_LOGI(TAG, "receive item size: %d", item_size);
-        // vRingbufferReturnItem(rb_out, item);
+        if (item_size <= 0) {
+            stop = true;
+        }
     }
+    vTaskDelete(codec_task);
+    vTaskDelete(read_task);
 }

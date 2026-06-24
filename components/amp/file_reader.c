@@ -1,11 +1,14 @@
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <string.h>
 #include <sys/queue.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "amp/amp_mem.h"
 #include "amp/file_reader.h"
+#include "element_priv.h"
 #include "esp_log.h"
 
 #include "sds.h"
@@ -18,12 +21,79 @@ struct audio_file_source_node {
 };
 
 typedef TAILQ_HEAD(audio_file_source_head, audio_file_source_node) audio_file_source_head_t;
+
 struct file_reader {
+    AMP_ELEMENT_ENTRY() el_entry;
     sds base;
     size_t size;
     struct audio_file_source_node *cur;
     audio_file_source_head_t file_list;
+    ringbuf_handle_t rb;
 };
+
+static void file_reader_set_output(void *args, ringbuf_handle_t rb) {
+    file_reader_handle_t reader = args;
+    reader->rb = rb;
+}
+
+static void file_reader_task_run(void *args) {
+    file_reader_handle_t reader = args;
+    ringbuf_handle_t rb = reader->rb;
+    assert(rb);
+
+    size_t buf_size = 1024;
+    uint8_t *buf = amp_malloc(sizeof(uint8_t) * buf_size);
+    TickType_t wait_time = pdMS_TO_TICKS(1000);
+
+    int fd = 0;
+    const char *cur_file = NULL;
+    while (true) {
+        if (fd <= 0) {
+            struct audio_file_source *af = file_reader_next(reader);
+            if (af == NULL || af->is_dir) {
+                continue;
+            }
+            cur_file = af->name;
+            fd = open(cur_file, O_RDONLY);
+            if (fd < 0) {
+                ESP_LOGE(TAG, "open file %s fail: %d(%s)", cur_file, errno, strerror(errno));
+                continue;
+            }
+            ESP_LOGI(TAG, "open file %s success, fd: %d", cur_file, fd);
+        }
+        ssize_t read_size = read(fd, buf, buf_size);
+        if (read_size < 0) {
+            // read error
+            ESP_LOGE(TAG, "read file %s fail: %d(%s)", cur_file, errno, strerror(errno));
+            continue;
+        } else if (read_size == 0) {
+            // read finished
+            ESP_LOGI(TAG, "read file %s EOF", cur_file);
+            cur_file = NULL;
+            close(fd);
+            fd = 0;
+            continue;
+        }
+        ESP_LOGD(TAG, "read file %s success, size: %d", cur_file, read_size);
+        // send to ringbuf
+        int write_size = rb_write(rb, (char *)buf, read_size, wait_time);
+        if (write_size < 0) {
+            ESP_LOGE(TAG, "send data to ringbuf fail: %d", write_size);
+            continue;
+        }
+    }
+}
+
+static void file_reader_el_deinit(void *args) { file_reader_deinit((file_reader_handle_t)args); }
+
+static amp_element_interface_t file_reader_element_interface = {
+    .deinit = file_reader_el_deinit,
+    .set_input_rb = NULL,
+    .set_output_rb = file_reader_set_output,
+    .task_run = file_reader_task_run,
+};
+
+const amp_element_interface_t *file_reader_el_interface() { return &file_reader_element_interface; }
 
 struct audio_file_source *file_reader_next(file_reader_handle_t fl) {
     if (fl->size == 0) {

@@ -21,8 +21,6 @@ void *amp_calloc(size_t nmemb, size_t size) {
     void *data = NULL;
 #if CONFIG_SPIRAM_BOOT_INIT
     data = heap_caps_calloc(nmemb, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (data)
-        memset(data, 0, nmemb * size);
 #else
     data = calloc(nmemb, size);
 #endif // CONFIG_SPIRAM_BOOT_INIT

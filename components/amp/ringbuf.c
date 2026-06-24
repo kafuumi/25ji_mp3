@@ -82,6 +82,9 @@ ringbuf_handle_t rb_create(int block_size, int n_blocks) {
     return rb;
 
 _rb_init_failed:
+    if (buf) {
+        amp_free(buf);
+    }
     rb_destroy(rb);
     return NULL;
 }
@@ -91,7 +94,7 @@ esp_err_t rb_destroy(ringbuf_handle_t rb) {
         return ESP_ERR_INVALID_ARG;
     }
     if (rb->p_o) {
-        free(rb->p_o);
+        amp_free(rb->p_o);
         rb->p_o = NULL;
     }
     if (rb->can_read) {
@@ -106,7 +109,7 @@ esp_err_t rb_destroy(ringbuf_handle_t rb) {
         vSemaphoreDelete(rb->lock);
         rb->lock = NULL;
     }
-    free(rb);
+    amp_free(rb);
     rb = NULL;
     return ESP_OK;
 }

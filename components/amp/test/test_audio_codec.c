@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "amp/audio_codec.h"
+#include "amp/ringbuf.h"
 #include "esp_log.h"
 #include "unity.h"
 
@@ -50,8 +51,8 @@ TEST_CASE("Audio Codec run codec task", "[amp][audio_codec]") {
     TEST_ASSERT_NOT_NULL(intf->task_run);
     TEST_ASSERT_TRUE(intf->set_input_rb && intf->set_output_rb);
 
-    RingbufHandle_t rb_in = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
-    RingbufHandle_t rb_out = xRingbufferCreate(8192, RINGBUF_TYPE_NOSPLIT);
+    ringbuf_handle_t rb_in = rb_create(sizeof(uint8_t), 4096);
+    ringbuf_handle_t rb_out = rb_create(sizeof(uint8_t), 4096);
 
     intf->set_input_rb(codec, rb_in);
     intf->set_output_rb(codec, rb_out);

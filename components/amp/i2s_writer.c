@@ -5,7 +5,6 @@
 #include "amp/i2s_writer.h"
 #include "bsp.h"
 #include "element_priv.h"
-#include "freertos/ringbuf.h"
 #include "utils/esp_utils.h"
 
 static const char *TAG = "i2s_writer";
@@ -14,7 +13,7 @@ struct i2s_writer {
     AMP_ELEMENT_ENTRY() el_entry;
     bool chan_enable;
     i2s_port_t i2s_port;
-    RingbufHandle_t rb_in;
+    ringbuf_handle_t rb_in;
     i2s_chan_handle_t tx_chan;
 };
 
@@ -81,12 +80,15 @@ static bool i2s_writer_do_event(i2s_writer_handle_t *writer, TickType_t wait_tim
 
 static void i2s_writer_task(void *args) {
     i2s_writer_handle_t *writer = (i2s_writer_handle_t *)args;
-    RingbufHandle_t rb = writer->rb_in;
+    ringbuf_handle_t rb = writer->rb_in;
     assert(rb);
     const TickType_t max_wait = pdMS_TO_TICKS(1000);
 
     size_t data_size;
     TickType_t notify_wait = 0;
+
+    size_t read_buf_size = 1024;
+    uint8_t *read_buf = malloc(sizeof(uint8_t) * read_buf_size);
     while (true) {
         bool should_send = i2s_writer_do_event(writer, notify_wait);
         if (!should_send) {
@@ -97,22 +99,18 @@ static void i2s_writer_task(void *args) {
         notify_wait = 0;
         // write data to i2s
         {
-            void *item = xRingbufferReceive(rb, &data_size, max_wait);
+            data_size = rb_read(rb, (char *)read_buf, read_buf_size, max_wait);
             if (data_size == 0) {
-                continue;
-            }
-            if (item == NULL) {
                 ESP_LOGW(TAG, "ringbuf is empty, no item is received");
                 continue;
             }
             // write to i2s
-            i2s_writer_send_pcm(writer, item, data_size);
-            vRingbufferReturnItem(rb, item);
+            i2s_writer_send_pcm(writer, read_buf, data_size);
         }
     }
 }
 
-static void i2s_writer_set_input(void *args, RingbufHandle_t rb) {
+static void i2s_writer_set_input(void *args, ringbuf_handle_t rb) {
     i2s_writer_handle_t *writer = args;
     writer->rb_in = rb;
 }
@@ -168,7 +166,7 @@ esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t **writ
     w->chan_enable = false;
     w->tx_chan = NULL;
     w->i2s_port = cfg->i2s_port;
-    w->rb_in = cfg->rb_in;
+    w->rb_in = NULL;
 
     struct i2s_writer_output_args args = AUDIO_OUTPUT_DEFAULT_ARGS();
     esp_err_t err = _i2s_driver_init(w, &args);

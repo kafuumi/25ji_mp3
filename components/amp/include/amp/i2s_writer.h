@@ -3,7 +3,6 @@
 
 #include "driver/i2s_std.h"
 #include "esp_err.h"
-#include "freertos/ringbuf.h"
 
 #include "amp/controller.h"
 
@@ -22,7 +21,6 @@ struct i2s_writer_output_args {
 
 struct i2s_writer_cfg {
     i2s_port_t i2s_port;
-    RingbufHandle_t rb_in;
 };
 
 typedef struct i2s_writer i2s_writer_handle_t;
@@ -35,6 +33,6 @@ esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t *writer, const uint8_t *data, 
 
 esp_err_t i2s_writer_audio_config(i2s_writer_handle_t *writer, struct i2s_writer_output_args *args);
 
-const amp_element_interface_t *i2s_writer_el_interface() ;
+const amp_element_interface_t *i2s_writer_el_interface();
 
 #endif // _AMP_I2S_WRITER_H_

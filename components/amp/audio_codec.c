@@ -4,13 +4,14 @@
 #include "esp_log.h"
 
 #include "amp/audio_codec.h"
+#include "amp/ringbuf.h"
 #include "element_priv.h"
 
 static const char *TAG = "audio_codec";
 
 struct audio_codec {
-    AMP_ELEMENT_ENTRY() el_entry;  // must first
-    RingbufHandle_t rb_in, rb_out; /* input and output ringbuf. owner is others, read only*/
+    AMP_ELEMENT_ENTRY() el_entry;   // must first
+    ringbuf_handle_t rb_in, rb_out; /* input and output ringbuf. owner is others, read only*/
 
     esp_audio_simple_dec_handle_t decoder; /* simple decoder. owner is self*/
     bool decode_opened;                    /* decoder open flag */
@@ -41,27 +42,32 @@ static inline esp_err_t audio_codec_create_decoder(audio_codec_handle_t *codec,
 
 static void audio_codec_task_run(void *args) {
     audio_codec_handle_t *decoder = args;
-    RingbufHandle_t rb_in = decoder->rb_in;
-    RingbufHandle_t rb_out = decoder->rb_out;
+    ringbuf_handle_t rb_in = decoder->rb_in;
+    ringbuf_handle_t rb_out = decoder->rb_out;
     esp_audio_simple_dec_handle_t dec = decoder->decoder;
     assert(rb_in && rb_out);
-    size_t rb_out_size = xRingbufferGetMaxItemSize(rb_out);
+    size_t rb_out_size = rb_get_size(rb_out);
     if (rb_out_size) {
         ESP_LOGI(TAG, "ringbuf out max size is %ld", rb_out_size);
     }
 
+    size_t in_buf_size = 2048;
+    uint8_t *in_buf = malloc(sizeof(uint8_t) * in_buf_size);
+
     size_t out_buf_size = 2048;
     uint8_t *out_buf = malloc(sizeof(uint8_t) * out_buf_size);
 
+    TickType_t read_wait = pdMS_TO_TICKS(100);
+    TickType_t write_wait = pdMS_TO_TICKS(100);
+
     esp_err_t err;
     while (true) {
-        size_t in_size = 0;
-        void *in_data = xRingbufferReceive(rb_in, &in_size, pdMS_TO_TICKS(100));
+        size_t in_size = rb_read(rb_in, (char *)in_buf, in_buf_size, read_wait);
         if (in_size == 0) {
             continue;
         }
         esp_audio_simple_dec_raw_t raw = {
-            .buffer = in_data,
+            .buffer = in_buf,
             .len = in_size,
             .eos = false,
         };
@@ -73,8 +79,9 @@ static void audio_codec_task_run(void *args) {
             err = esp_audio_simple_dec_process(dec, &raw, &out);
             if (ESP_AUDIO_ERR_OK == err) {
                 ESP_LOGI(TAG, "decode success, size: %d, consumed: %d", out.decoded_size, raw.consumed);
-                if (out.decoded_size > 0)
-                    xRingbufferSend(rb_out, out.buffer, out.decoded_size, portMAX_DELAY);
+                if (out.decoded_size > 0) {
+                    rb_write(rb_out, (char *)out_buf, out.decoded_size, write_wait);
+                }
                 raw.buffer += raw.consumed;
                 raw.len -= raw.consumed;
                 continue;
@@ -88,16 +95,15 @@ static void audio_codec_task_run(void *args) {
                 continue;
             }
         }
-        vRingbufferReturnItem(rb_in, in_data);
     }
 }
 
-static void audio_codec_set_input(void *args, RingbufHandle_t rb_in) {
+static void audio_codec_set_input(void *args, ringbuf_handle_t rb_in) {
     audio_codec_handle_t *decoder = args;
     decoder->rb_in = rb_in;
 }
 
-static void audio_codec_set_output(void *args, RingbufHandle_t rb_out) {
+static void audio_codec_set_output(void *args, ringbuf_handle_t rb_out) {
     audio_codec_handle_t *decoder = args;
     decoder->rb_out = rb_out;
 }

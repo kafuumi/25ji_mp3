@@ -2,10 +2,10 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
-#include "freertos/ringbuf.h"
 
 #include "amp/controller.h"
 #include "amp/i2s_writer.h"
+#include "amp/ringbuf.h"
 #include "amp/sin_pcm_reader.h"
 #include "element_priv.h"
 #include "utils/esp_utils.h"
@@ -32,7 +32,7 @@ ESP_EVENT_DEFINE_BASE(AMP_EVENT_REPORT);
 
 typedef struct {
     size_t size, cap;
-    RingbufHandle_t *items;
+    ringbuf_handle_t *items;
 } rb_list_t;
 
 static inline void rb_list_init(rb_list_t *rb) {
@@ -53,7 +53,7 @@ static inline esp_err_t rb_list_realloc(rb_list_t *rb, size_t require_size) {
         if (new_size < require_size) {
             new_size = require_size;
         }
-        RingbufHandle_t *items = realloc(rb->items, new_size * sizeof(RingbufHandle_t));
+        ringbuf_handle_t *items = realloc(rb->items, new_size * sizeof(ringbuf_handle_t));
         if (!items) {
             return ESP_ERR_NO_MEM;
         }
@@ -63,7 +63,7 @@ static inline esp_err_t rb_list_realloc(rb_list_t *rb, size_t require_size) {
     return ESP_OK;
 }
 
-static inline esp_err_t rb_list_append(rb_list_t *rb_list, RingbufHandle_t rb) {
+static inline esp_err_t rb_list_append(rb_list_t *rb_list, ringbuf_handle_t rb) {
     esp_err_t err = rb_list_realloc(rb_list, rb_list->size + 1);
     if (ESP_OK != err) {
         return err; // no memory
@@ -73,16 +73,16 @@ static inline esp_err_t rb_list_append(rb_list_t *rb_list, RingbufHandle_t rb) {
     return ESP_OK;
 }
 
-static inline RingbufHandle_t rb_list_at(rb_list_t *rb, int idx) {
+static inline ringbuf_handle_t rb_list_at(rb_list_t *rb, int idx) {
     if (idx < 0 || idx >= rb->size) {
         return NULL;
     }
     return rb->items[idx];
 }
 
-static inline RingbufHandle_t rb_list_last(rb_list_t *rb) { return rb_list_at(rb, rb->size - 1); }
+static inline ringbuf_handle_t rb_list_last(rb_list_t *rb) { return rb_list_at(rb, rb->size - 1); }
 
-static inline RingbufHandle_t rb_list_first(rb_list_t *rb) { return rb_list_at(rb, 0); }
+static inline ringbuf_handle_t rb_list_first(rb_list_t *rb) { return rb_list_at(rb, 0); }
 
 typedef STAILQ_HEAD(amp_el_head, amp_element) amp_element_list_head_t;
 
@@ -123,13 +123,13 @@ static inline esp_err_t amp_controller_append(amp_controller_handle_t *controlle
     el->task = NULL;
     el->event_bus = controller->event_bus;
 
-    RingbufHandle_t rb;
+    ringbuf_handle_t rb;
     bool append_rb = false;
     switch (el->role) {
     case AMP_ELEMENT_READER:
         assert(intf->set_output_rb);
         // set output
-        rb = xRingbufferCreate(cfg->rb_out_size, RINGBUF_TYPE_BYTEBUF);
+        rb = rb_create(sizeof(uint8_t), cfg->rb_out_size);
         intf->set_output_rb(el, rb);
         append_rb = true;
         break;
@@ -143,7 +143,7 @@ static inline esp_err_t amp_controller_append(amp_controller_handle_t *controlle
         }
         intf->set_input_rb(el, rb);
         // 2. set output rb
-        rb = xRingbufferCreate(cfg->rb_out_size, RINGBUF_TYPE_BYTEBUF);
+        rb = rb_create(sizeof(uint8_t), cfg->rb_out_size);
         intf->set_output_rb(el, rb);
         append_rb = true;
         break;
@@ -257,9 +257,9 @@ void amp_controller_deinit(amp_controller_handle_t *controller) {
             el->intf->deinit(el);
     }
     for (size_t i = 0; i < (controller->rb_list).size; i++) {
-        RingbufHandle_t rb = controller->rb_list.items[i];
+        ringbuf_handle_t rb = controller->rb_list.items[i];
         if (rb)
-            vRingbufferDelete(rb);
+            rb_destroy(rb);
     }
     rb_list_deinit(&controller->rb_list);
     free(controller);

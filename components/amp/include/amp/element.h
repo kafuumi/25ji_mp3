@@ -3,14 +3,15 @@
 
 #include "esp_err.h"
 #include "esp_event.h"
-#include "freertos/ringbuf.h"
+
+#include "amp/ringbuf.h"
 
 #define AMP_ELEMENT_ENTRY() amp_element_handle_t
 
 struct amp_element_interface {
     void (*task_run)(void *);
-    void (*set_input_rb)(void *, RingbufHandle_t);
-    void (*set_output_rb)(void *, RingbufHandle_t);
+    void (*set_input_rb)(void *, ringbuf_handle_t);
+    void (*set_output_rb)(void *, ringbuf_handle_t);
     esp_err_t (*setup_event_handler)(void *, esp_event_loop_handle_t);
     void (*deinit)(void *);
 };

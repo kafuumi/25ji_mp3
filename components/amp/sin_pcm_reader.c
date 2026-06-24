@@ -3,9 +3,9 @@
 
 #include "esp_err.h"
 #include "esp_log.h"
-#include "freertos/ringbuf.h"
 
 #include "amp/controller.h"
+#include "amp/ringbuf.h"
 #include "amp/sin_pcm_reader.h"
 #include "element_priv.h"
 
@@ -15,7 +15,7 @@ struct sin_pcm_reader {
     AMP_ELEMENT_ENTRY() el_entry;
     int max_amplitude;
     size_t frames_size;
-    RingbufHandle_t rb_out;
+    ringbuf_handle_t rb_out;
     struct sin_pcm_audio_args args;
 };
 
@@ -59,10 +59,10 @@ static bool sin_pcm_reader_do_event(sin_pcm_reader_handle_t *reader, TickType_t 
 static void sin_pcm_reader_task(void *args) {
     sin_pcm_reader_handle_t *reader = (sin_pcm_reader_handle_t *)args;
     size_t buf_size = reader->frames_size * reader->args.channel * sizeof(int16_t);
-    RingbufHandle_t rb = reader->rb_out;
+    ringbuf_handle_t rb = reader->rb_out;
     assert(rb);
 
-    size_t rb_max_size = xRingbufferGetMaxItemSize(rb);
+    size_t rb_max_size = rb_get_size(rb);
     if (rb_max_size < buf_size) {
         ESP_LOGE(TAG, "ringbuf max size(%zu) is less than frames_size * channel(%zu)", rb_max_size, buf_size);
         vTaskDelete(NULL);
@@ -84,7 +84,7 @@ static void sin_pcm_reader_task(void *args) {
         // generate pcm data
         {
             generate_sin_pcm_16bit(reader, (int16_t *)buf, &phase);
-            BaseType_t ret = xRingbufferSend(rb, buf, buf_size, max_wait);
+            BaseType_t ret = rb_write(rb, buf, buf_size, max_wait);
             if (ret != pdTRUE) {
                 ESP_LOGW(TAG, "send ringbuf fail: %d, send size: %zu", ret, buf_size);
                 continue;
@@ -109,7 +109,7 @@ static void sin_pcm_reader_report_event_handler(void *args, esp_event_base_t bas
 
 static esp_err_t sin_pcm_reader_register_event(void *args, esp_event_loop_handle_t event_bus) { return ESP_OK; }
 
-static void sin_pcm_reader_set_output(void *args, RingbufHandle_t rb) {
+static void sin_pcm_reader_set_output(void *args, ringbuf_handle_t rb) {
     sin_pcm_reader_handle_t *reader = args;
     reader->rb_out = rb;
 }

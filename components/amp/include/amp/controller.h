@@ -3,7 +3,6 @@
 
 #include "esp_err.h"
 #include "esp_event.h"
-#include "freertos/ringbuf.h"
 #include <sys/queue.h>
 
 #include "amp/element.h"

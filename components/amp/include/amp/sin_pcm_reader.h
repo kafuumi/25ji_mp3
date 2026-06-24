@@ -2,7 +2,6 @@
 #define _AMP_SIN_PCM_READER_H_
 
 #include "esp_err.h"
-#include "freertos/ringbuf.h"
 
 #include "amp/controller.h"
 

@@ -5,7 +5,6 @@
 #include "amp/sin_pcm_reader.h"
 #include "driver/i2s_types.h"
 #include "esp_err.h"
-#include "freertos/ringbuf.h"
 
 void audio_test() {
     i2s_writer_handle_t *i2s_writer;

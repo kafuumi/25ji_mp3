@@ -6,7 +6,7 @@
 
 #include "amp/ringbuf.h"
 
-#define AMP_ELEMENT_ENTRY() amp_element_handle_t
+#define AMP_ELEMENT_ENTRY() struct amp_element
 
 struct amp_element_interface {
     void (*task_run)(void *);
@@ -30,6 +30,6 @@ enum amp_element_role {
     AMP_ELEMENT_WRITER,
 };
 
-typedef struct amp_element amp_element_handle_t;
+typedef struct amp_element *amp_element_handle_t;
 
 #endif // _AMP_ELEMENT_H_

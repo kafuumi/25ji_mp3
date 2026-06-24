@@ -20,7 +20,7 @@ struct sin_pcm_reader {
     struct sin_pcm_audio_args args;
 };
 
-static void generate_sin_pcm_16bit(sin_pcm_reader_handle_t *reader, int16_t *buf, float *phase) {
+static void generate_sin_pcm_16bit(sin_pcm_reader_handle_t reader, int16_t *buf, float *phase) {
     const struct sin_pcm_audio_args *args = &(reader->args);
     const float amplitude = reader->max_amplitude;
     float tmp = 0;
@@ -46,7 +46,7 @@ static void generate_sin_pcm_16bit(sin_pcm_reader_handle_t *reader, int16_t *buf
     *phase = tmp;
 }
 
-static bool sin_pcm_reader_do_event(sin_pcm_reader_handle_t *reader, TickType_t wait_time) {
+static bool sin_pcm_reader_do_event(sin_pcm_reader_handle_t reader, TickType_t wait_time) {
     // xxxx-xxxx xxxx-xxxx xxxx-xxxx xxxx-xxxx
     // undefined    self     REPORT   ACTION
     uint32_t notify_count = 0;
@@ -58,7 +58,7 @@ static bool sin_pcm_reader_do_event(sin_pcm_reader_handle_t *reader, TickType_t 
 }
 
 static void sin_pcm_reader_task(void *args) {
-    sin_pcm_reader_handle_t *reader = (sin_pcm_reader_handle_t *)args;
+    sin_pcm_reader_handle_t reader = (sin_pcm_reader_handle_t )args;
     size_t buf_size = reader->frames_size * reader->args.channel * sizeof(int16_t);
     ringbuf_handle_t rb = reader->rb_out;
     assert(rb);
@@ -95,7 +95,7 @@ static void sin_pcm_reader_task(void *args) {
 }
 
 static void sin_pcm_reader_report_event_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *evt) {
-    sin_pcm_reader_handle_t *reader = args;
+    sin_pcm_reader_handle_t reader = args;
     uint32_t notify = 0xffffffff;
     switch (evt_id) {
         // todo
@@ -111,7 +111,7 @@ static void sin_pcm_reader_report_event_handler(void *args, esp_event_base_t bas
 static esp_err_t sin_pcm_reader_register_event(void *args, esp_event_loop_handle_t event_bus) { return ESP_OK; }
 
 static void sin_pcm_reader_set_output(void *args, ringbuf_handle_t rb) {
-    sin_pcm_reader_handle_t *reader = args;
+    sin_pcm_reader_handle_t reader = args;
     reader->rb_out = rb;
 }
 
@@ -126,8 +126,8 @@ static const amp_element_interface_t sin_pcm_element_interface = {
 // ####################### sin_pcm_reader public #######################
 // #####################################################################
 
-esp_err_t sin_pcm_reader_init(struct sin_pcm_reader_cfg *cfg, sin_pcm_reader_handle_t **reader) {
-    sin_pcm_reader_handle_t *r = amp_calloc(1, sizeof(sin_pcm_reader_handle_t));
+esp_err_t sin_pcm_reader_init(struct sin_pcm_reader_cfg *cfg, sin_pcm_reader_handle_t *reader) {
+    sin_pcm_reader_handle_t r = amp_calloc(1, sizeof(sin_pcm_reader_handle_t));
     if (!r) {
         return ESP_ERR_NO_MEM;
     }
@@ -137,15 +137,15 @@ esp_err_t sin_pcm_reader_init(struct sin_pcm_reader_cfg *cfg, sin_pcm_reader_han
     return ESP_OK;
 }
 
-void sin_pcm_reader_deinit(sin_pcm_reader_handle_t *reader) {
+void sin_pcm_reader_deinit(sin_pcm_reader_handle_t reader) {
     if (!reader) {
         return;
     }
     amp_free(reader);
 }
 
-void sin_pcm_config_audio(sin_pcm_reader_handle_t *reader, const struct sin_pcm_audio_args *args) {
+void sin_pcm_config_audio(sin_pcm_reader_handle_t reader, const struct sin_pcm_audio_args *args) {
     memcpy(&(reader->args), args, sizeof(struct sin_pcm_audio_args));
 }
 
-amp_element_interface_t *sin_pcm_reader_el_interface() { return (amp_element_interface_t *)&sin_pcm_element_interface; }
+const amp_element_interface_t *sin_pcm_reader_el_interface() { return (amp_element_interface_t *)&sin_pcm_element_interface; }

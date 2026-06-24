@@ -28,12 +28,12 @@ struct sin_pcm_reader_cfg {
     size_t frames_size;
 };
 
-typedef struct sin_pcm_reader sin_pcm_reader_handle_t;
+typedef struct sin_pcm_reader *sin_pcm_reader_handle_t;
 
-esp_err_t sin_pcm_reader_init(struct sin_pcm_reader_cfg *cfg, sin_pcm_reader_handle_t **reader);
+esp_err_t sin_pcm_reader_init(struct sin_pcm_reader_cfg *cfg, sin_pcm_reader_handle_t *reader);
 
-void sin_pcm_config_audio(sin_pcm_reader_handle_t *reader, const struct sin_pcm_audio_args *args);
+void sin_pcm_config_audio(sin_pcm_reader_handle_t reader, const struct sin_pcm_audio_args *args);
 
-amp_element_interface_t *sin_pcm_reader_el_interface();
+const amp_element_interface_t *sin_pcm_reader_el_interface();
 
 #endif // _AMP_SIN_PCM_READER_

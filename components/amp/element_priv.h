@@ -28,7 +28,7 @@ struct amp_element {
     int stack_size;
     TaskHandle_t task;
     esp_event_handler_t event_bus;
-    amp_dashboard_handle_t *dashboard;
+    amp_dashboard_handle_t dashboard;
     const amp_element_interface_t *intf;
 
     enum amp_element_role role;

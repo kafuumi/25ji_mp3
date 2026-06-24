@@ -19,7 +19,7 @@ struct audio_codec {
     esp_audio_simple_dec_type_t dec_type;
 };
 
-static inline esp_err_t audio_codec_create_decoder(audio_codec_handle_t *codec,
+static inline esp_err_t audio_codec_create_decoder(audio_codec_handle_t codec,
                                                    const esp_audio_simple_dec_type_t dec_type) {
     esp_audio_simple_dec_cfg_t dec_cfg = {
         .dec_type = dec_type,
@@ -42,7 +42,7 @@ static inline esp_err_t audio_codec_create_decoder(audio_codec_handle_t *codec,
 }
 
 static void audio_codec_task_run(void *args) {
-    audio_codec_handle_t *decoder = args;
+    audio_codec_handle_t decoder = args;
     ringbuf_handle_t rb_in = decoder->rb_in;
     ringbuf_handle_t rb_out = decoder->rb_out;
     esp_audio_simple_dec_handle_t dec = decoder->decoder;
@@ -100,6 +100,9 @@ static void audio_codec_task_run(void *args) {
                 out_buf = buf;
                 out_buf_size = ns;
                 continue;
+            } else if (err < 0) {
+                ESP_LOGW(TAG, "decode fail: %d", err);
+                continue;
             }
             ESP_LOGI(TAG, "decode success, consumed: %d, decodec_size: %d", raw_dec.consumed, out_dec.decoded_size);
             if (out_dec.decoded_size > 0) {
@@ -124,12 +127,12 @@ static void audio_codec_task_run(void *args) {
 }
 
 static void audio_codec_set_input(void *args, ringbuf_handle_t rb_in) {
-    audio_codec_handle_t *decoder = args;
+    audio_codec_handle_t decoder = args;
     decoder->rb_in = rb_in;
 }
 
 static void audio_codec_set_output(void *args, ringbuf_handle_t rb_out) {
-    audio_codec_handle_t *decoder = args;
+    audio_codec_handle_t decoder = args;
     decoder->rb_out = rb_out;
 }
 
@@ -142,10 +145,10 @@ static const amp_element_interface_t audio_codec_element_interface = {
 
 const amp_element_interface_t *audio_codec_el_interface() { return &audio_codec_element_interface; }
 
-esp_err_t audio_codec_init(audio_codec_handle_t **codec) {
+esp_err_t audio_codec_init(audio_codec_handle_t *codec) {
     esp_audio_simple_dec_register_default();
     esp_audio_dec_register_default();
-    audio_codec_handle_t *c = amp_calloc(1, sizeof(audio_codec_handle_t));
+    audio_codec_handle_t c = amp_calloc(1, sizeof(audio_codec_handle_t));
     if (!c)
         return ESP_ERR_NO_MEM;
 
@@ -155,7 +158,7 @@ esp_err_t audio_codec_init(audio_codec_handle_t **codec) {
     return ESP_OK;
 }
 
-void audio_codec_deinit(audio_codec_handle_t *codec) {
+void audio_codec_deinit(audio_codec_handle_t codec) {
     if (!codec)
         return;
 

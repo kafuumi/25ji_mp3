@@ -4,11 +4,11 @@
 #include "amp/element.h"
 #include "esp_err.h"
 
-typedef struct audio_codec audio_codec_handle_t;
+typedef struct audio_codec *audio_codec_handle_t;
 
-esp_err_t audio_codec_init(audio_codec_handle_t **codec);
+esp_err_t audio_codec_init(audio_codec_handle_t *codec);
 
-void audio_codec_deinit(audio_codec_handle_t *codec);
+void audio_codec_deinit(audio_codec_handle_t codec);
 
 const amp_element_interface_t *audio_codec_el_interface();
 

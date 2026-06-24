@@ -23,15 +23,15 @@ struct i2s_writer_cfg {
     i2s_port_t i2s_port;
 };
 
-typedef struct i2s_writer i2s_writer_handle_t;
+typedef struct i2s_writer *i2s_writer_handle_t;
 
-esp_err_t i2s_writer_init(struct i2s_writer_cfg *, i2s_writer_handle_t **);
+esp_err_t i2s_writer_init(struct i2s_writer_cfg *, i2s_writer_handle_t *);
 
-void i2s_writer_deinit(i2s_writer_handle_t *writer);
+void i2s_writer_deinit(i2s_writer_handle_t writer);
 
-esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t *writer, const uint8_t *data, size_t size);
+esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t writer, const uint8_t *data, size_t size);
 
-esp_err_t i2s_writer_audio_config(i2s_writer_handle_t *writer, struct i2s_writer_output_args *args);
+esp_err_t i2s_writer_audio_config(i2s_writer_handle_t writer, struct i2s_writer_output_args *args);
 
 const amp_element_interface_t *i2s_writer_el_interface();
 

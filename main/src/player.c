@@ -7,14 +7,14 @@
 #include "esp_err.h"
 
 void audio_test() {
-    i2s_writer_handle_t *i2s_writer;
+    i2s_writer_handle_t i2s_writer;
     struct i2s_writer_cfg cfg = {
         .i2s_port = I2S_NUM_0,
     };
     esp_err_t err = i2s_writer_init(&cfg, &i2s_writer);
     ESP_ERROR_CHECK(err);
 
-    sin_pcm_reader_handle_t *pcm_reader;
+    sin_pcm_reader_handle_t pcm_reader;
     struct sin_pcm_reader_cfg pcm_cfg = {
         .frames_size = 128,
         .max_amplitude = 3000,
@@ -31,7 +31,7 @@ void audio_test() {
     };
     sin_pcm_config_audio(pcm_reader, &audio_args);
 
-    amp_controller_handle_t *controller;
+    amp_controller_handle_t controller;
     err = amp_controller_init(&controller);
     ESP_ERROR_CHECK(err);
 
@@ -41,10 +41,10 @@ void audio_test() {
         .rb_out_size = 1024,
     };
 
-    amp_controller_append_reader(controller, (amp_element_handle_t *)pcm_reader, sin_pcm_reader_el_interface(),
+    amp_controller_append_reader(controller, (amp_element_handle_t )pcm_reader, sin_pcm_reader_el_interface(),
                                  &el_cfg);
     el_cfg.name = "i2s_writer";
-    amp_controller_append_writer(controller, (amp_element_handle_t *)i2s_writer, i2s_writer_el_interface(), &el_cfg);
+    amp_controller_append_writer(controller, (amp_element_handle_t )i2s_writer, i2s_writer_el_interface(), &el_cfg);
 
     amp_controller_run(controller);
 

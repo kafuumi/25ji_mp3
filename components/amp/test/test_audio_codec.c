@@ -38,7 +38,7 @@ static void read_file_data_task(void *args) {
 }
 
 TEST_CASE("Audio Codec run codec task", "[amp][audio_codec]") {
-    audio_codec_handle_t *codec;
+    audio_codec_handle_t codec;
     esp_err_t err = audio_codec_init(&codec);
     TEST_ASSERT_EQUAL(ESP_OK, err);
     TEST_ASSERT_NOT_NULL(codec);

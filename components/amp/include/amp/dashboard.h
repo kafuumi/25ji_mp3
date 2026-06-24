@@ -23,7 +23,7 @@ enum amp_state {
 /**
  * @brief representing a single dashboard handle
  */
-typedef struct amp_dashboard amp_dashboard_handle_t;
+typedef struct amp_dashboard *amp_dashboard_handle_t;
 
 /**
  * @brief Allocate and initialize a dashboard
@@ -33,14 +33,14 @@ typedef struct amp_dashboard amp_dashboard_handle_t;
  *     - ESP_OK              Dashboard created successfully
  *     - ESP_ERR_NO_MEM      Insufficient memory
  */
-esp_err_t amp_dashboard_init(amp_dashboard_handle_t **dashboard);
+esp_err_t amp_dashboard_init(amp_dashboard_handle_t *dashboard);
 
 /**
  * @brief Deinitialize and free a dashboard
  *
  * @param dashboard  Dashboard handle created by amp_dashboard_init
  */
-void amp_dashboard_deinit(amp_dashboard_handle_t *dashboard);
+void amp_dashboard_deinit(amp_dashboard_handle_t dashboard);
 
 /**
  * @brief Atomically swap the current state with a new state
@@ -49,7 +49,7 @@ void amp_dashboard_deinit(amp_dashboard_handle_t *dashboard);
  * @param new_state  New state to set
  * @return Previous state before the swap
  */
-enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t *dashboard, enum amp_state new_state);
+enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t dashboard, enum amp_state new_state);
 
 /**
  * @brief Atomically load the current state
@@ -57,7 +57,7 @@ enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t *dashboard, enum
  * @param dashboard  Dashboard handle
  * @return Current stored state
  */
-enum amp_state amp_dashboard_load_state(amp_dashboard_handle_t *dashboard);
+enum amp_state amp_dashboard_load_state(amp_dashboard_handle_t dashboard);
 
 #ifdef __cplusplus
 }

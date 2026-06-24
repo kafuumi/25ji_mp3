@@ -91,12 +91,12 @@ struct amp_controller {
     TaskHandle_t self;
     esp_event_loop_handle_t event_bus;
     esp_event_handler_instance_t report_evt;
-    amp_dashboard_handle_t *dashboard;
+    amp_dashboard_handle_t dashboard;
     amp_element_list_head_t el_list;
     rb_list_t rb_list;
 };
 
-static esp_err_t inline element_task_run(amp_element_handle_t *el) {
+static esp_err_t inline element_task_run(amp_element_handle_t el) {
     if (el->intf && el->intf->task_run) {
         TaskHandle_t t;
         BaseType_t ret = xTaskCreate((el->intf->task_run), el->name, el->stack_size, (void *)el, 1, &t);
@@ -112,7 +112,7 @@ static void amp_controller_handle_report_event(void *args, esp_event_base_t base
     // TODO
 }
 
-static inline esp_err_t amp_controller_append(amp_controller_handle_t *controller, amp_element_handle_t *el,
+static inline esp_err_t amp_controller_append(amp_controller_handle_t controller, amp_element_handle_t el,
                                               const amp_element_interface_t *intf,
                                               const struct amp_element_task_cfg *cfg) {
     assert(el && intf);
@@ -181,7 +181,7 @@ static inline esp_err_t amp_controller_append(amp_controller_handle_t *controlle
     return err;
 }
 
-static inline esp_err_t amp_controller_setup_event(amp_controller_handle_t *controller) {
+static inline esp_err_t amp_controller_setup_event(amp_controller_handle_t controller) {
     esp_event_loop_handle_t event_loop;
     esp_event_loop_args_t args = {
         .queue_size = 16,
@@ -208,7 +208,7 @@ static inline esp_err_t amp_controller_setup_event(amp_controller_handle_t *cont
     return ESP_OK;
 }
 
-static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t *controller,
+static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t controller,
                                                          enum amp_event_action_id evt) {
     // send event
     esp_err_t err = esp_event_post_to(controller->event_bus, AMP_EVENT_ACTION, evt, 0, 0, pdMS_TO_TICKS(3000));
@@ -220,15 +220,15 @@ static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t
     return ESP_OK;
 }
 
-esp_err_t amp_controller_init(amp_controller_handle_t **controller) {
-    amp_controller_handle_t *c = amp_malloc(sizeof(amp_controller_handle_t));
+esp_err_t amp_controller_init(amp_controller_handle_t *controller) {
+    amp_controller_handle_t c = amp_malloc(sizeof(amp_controller_handle_t));
     STAILQ_INIT(&(c->el_list));
     rb_list_init(&(c->rb_list));
     esp_err_t err = amp_controller_setup_event(c);
     if (ESP_OK != err) {
         goto cleanup;
     }
-    amp_dashboard_handle_t *dashboard;
+    amp_dashboard_handle_t dashboard;
     err = amp_dashboard_init(&dashboard);
     if (ESP_OK != err) {
         ESP_LOGE(TAG, "initialize amp dashboard fail: %s", esp_err_to_name(err));
@@ -249,10 +249,10 @@ cleanup:
     return err;
 }
 
-void amp_controller_deinit(amp_controller_handle_t *controller) {
+void amp_controller_deinit(amp_controller_handle_t controller) {
     if (!controller)
         return;
-    amp_element_handle_t *el;
+    amp_element_handle_t el;
     STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
         if (el->intf && el->intf->deinit)
             el->intf->deinit(el);
@@ -266,20 +266,20 @@ void amp_controller_deinit(amp_controller_handle_t *controller) {
     amp_free(controller);
 }
 
-esp_err_t amp_controller_append_reader(amp_controller_handle_t *controller, amp_element_handle_t *el,
+esp_err_t amp_controller_append_reader(amp_controller_handle_t controller, amp_element_handle_t el,
                                        const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg) {
     el->role = AMP_ELEMENT_READER;
     return amp_controller_append(controller, el, intf, cfg);
 }
 
-esp_err_t amp_controller_append_writer(amp_controller_handle_t *controller, amp_element_handle_t *el,
+esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_element_handle_t el,
                                        const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg) {
     el->role = AMP_ELEMENT_WRITER;
     return amp_controller_append(controller, el, intf, cfg);
 }
 
-esp_err_t amp_controller_run(amp_controller_handle_t *controller) {
-    amp_element_handle_t *el;
+esp_err_t amp_controller_run(amp_controller_handle_t controller) {
+    amp_element_handle_t el;
     esp_err_t err;
     // start all element
     STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
@@ -293,19 +293,19 @@ esp_err_t amp_controller_run(amp_controller_handle_t *controller) {
     return ESP_OK;
 }
 
-esp_err_t amp_controller_action_reset(amp_controller_handle_t *controller) {
+esp_err_t amp_controller_action_reset(amp_controller_handle_t controller) {
     CONTROLLER_ACTION_DO(controller, AMP_STATE_READY, AMP_EVENT_ACTION_RESET, TAG, "amp already READY state");
 }
 
-esp_err_t amp_controller_action_play(amp_controller_handle_t *controller) {
+esp_err_t amp_controller_action_play(amp_controller_handle_t controller) {
     CONTROLLER_ACTION_DO(controller, AMP_STATE_PLAYING, AMP_EVENT_ACTION_PLAY, TAG, "amp already PLAYING state");
 }
 
-esp_err_t amp_controller_action_pause(amp_controller_handle_t *controller) {
+esp_err_t amp_controller_action_pause(amp_controller_handle_t controller) {
     CONTROLLER_ACTION_DO(controller, AMP_STATE_PAUSE, AMP_EVENT_ACTION_PAUSE, TAG, "amp already PAUSED state");
 }
 
-esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t *controller, bool *to_play) {
+esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, bool *to_play) {
     enum amp_state state = amp_dashboard_load_state(controller->dashboard);
     if (state == AMP_STATE_PAUSE || state == AMP_STATE_READY) {
         if (to_play)

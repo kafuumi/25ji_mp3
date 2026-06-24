@@ -25,7 +25,7 @@ struct file_reader {
     audio_file_source_head_t file_list;
 };
 
-struct audio_file_source *file_reader_next(file_reader_handle_t *fl) {
+struct audio_file_source *file_reader_next(file_reader_handle_t fl) {
     if (fl->size == 0) {
         ESP_LOGE(TAG, "audio file list is empty");
         return NULL;
@@ -44,7 +44,7 @@ struct audio_file_source *file_reader_next(file_reader_handle_t *fl) {
     return ret;
 }
 
-esp_err_t file_reader_read_dir(file_reader_handle_t *fl, const char *dir) {
+esp_err_t file_reader_read_dir(file_reader_handle_t fl, const char *dir) {
     DIR *dp = opendir(dir);
     if (dp == NULL) {
         ESP_LOGE(TAG, "open dir %s fail: %d(%s)", dir, errno, strerror(errno));
@@ -108,8 +108,8 @@ esp_err_t file_reader_read_dir(file_reader_handle_t *fl, const char *dir) {
     return err;
 }
 
-esp_err_t file_reader_init(file_reader_handle_t **fr) {
-    file_reader_handle_t *f = amp_malloc(sizeof(file_reader_handle_t));
+esp_err_t file_reader_init(file_reader_handle_t *fr) {
+    file_reader_handle_t f = amp_malloc(sizeof(file_reader_handle_t));
     if (!f)
         return ESP_ERR_NO_MEM;
 
@@ -120,7 +120,7 @@ esp_err_t file_reader_init(file_reader_handle_t **fr) {
     return ESP_OK;
 }
 
-void file_reader_deinit(file_reader_handle_t *fr) {
+void file_reader_deinit(file_reader_handle_t fr) {
     if (!fr)
         return;
     if (fr->base)

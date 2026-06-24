@@ -18,7 +18,7 @@ struct i2s_writer {
     i2s_chan_handle_t tx_chan;
 };
 
-static esp_err_t _i2s_driver_init(i2s_writer_handle_t *ctx, struct i2s_writer_output_args *args) {
+static esp_err_t _i2s_driver_init(i2s_writer_handle_t ctx, struct i2s_writer_output_args *args) {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(ctx->i2s_port, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
     i2s_chan_handle_t tx_chan = NULL;
@@ -61,7 +61,7 @@ cleanup:
     return err;
 }
 
-static bool i2s_writer_do_event(i2s_writer_handle_t *writer, TickType_t wait_time) {
+static bool i2s_writer_do_event(i2s_writer_handle_t writer, TickType_t wait_time) {
     uint32_t notify = 0;
     // xxxx-xxxx xxxx-xxxx xxxx-xxxx xxxx-xxxx
     // undefined undefined   REPORT   ACTION
@@ -80,7 +80,7 @@ static bool i2s_writer_do_event(i2s_writer_handle_t *writer, TickType_t wait_tim
 }
 
 static void i2s_writer_task(void *args) {
-    i2s_writer_handle_t *writer = (i2s_writer_handle_t *)args;
+    i2s_writer_handle_t writer = args;
     ringbuf_handle_t rb = writer->rb_in;
     assert(rb);
     const TickType_t max_wait = pdMS_TO_TICKS(1000);
@@ -112,12 +112,12 @@ static void i2s_writer_task(void *args) {
 }
 
 static void i2s_writer_set_input(void *args, ringbuf_handle_t rb) {
-    i2s_writer_handle_t *writer = args;
+    i2s_writer_handle_t writer = args;
     writer->rb_in = rb;
 }
 
 static void i2s_writer_report_event_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *event) {
-    i2s_writer_handle_t *writer = args;
+    i2s_writer_handle_t writer = args;
     TaskHandle_t task_handle = writer->el_entry.task;
     uint32_t notify = 0;
     // TODO
@@ -133,7 +133,7 @@ static void i2s_writer_report_event_handler(void *args, esp_event_base_t base_id
 }
 
 static esp_err_t i2s_writer_setup_event(void *args, esp_event_loop_handle_t event_bus) {
-    i2s_writer_handle_t *writer = args;
+    i2s_writer_handle_t writer = args;
     // register event report
     esp_err_t err = esp_event_handler_instance_register_with(event_bus, AMP_EVENT_REPORT, ESP_EVENT_ANY_ID,
                                                              i2s_writer_report_event_handler, writer, NULL);
@@ -158,8 +158,8 @@ static const amp_element_interface_t i2s_amp_element_interface = {
 // ####################### i2s_writer public ###########################
 // #####################################################################
 
-esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t **writer) {
-    i2s_writer_handle_t *w = amp_calloc(1, sizeof(i2s_writer_handle_t));
+esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t *writer) {
+    i2s_writer_handle_t w = amp_calloc(1, sizeof(i2s_writer_handle_t));
     if (!w) {
         // no memory
         return ESP_ERR_NO_MEM;
@@ -179,7 +179,7 @@ esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t **writ
     return ESP_OK;
 }
 
-void i2s_writer_deinit(i2s_writer_handle_t *writer) {
+void i2s_writer_deinit(i2s_writer_handle_t writer) {
     if (!writer) {
         return;
     }
@@ -200,7 +200,7 @@ void i2s_writer_deinit(i2s_writer_handle_t *writer) {
     amp_free(writer);
 }
 
-esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t *writer, const uint8_t *data, size_t size) {
+esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t writer, const uint8_t *data, size_t size) {
     size_t written = 0;
     if (writer->tx_chan == NULL || !writer->chan_enable) {
         ESP_LOGE(TAG, "i2s channel not avaliable");
@@ -229,7 +229,7 @@ esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t *writer, const uint8_t *data, 
     return ESP_OK;
 }
 
-esp_err_t i2s_writer_audio_config(i2s_writer_handle_t *writer, struct i2s_writer_output_args *args) {
+esp_err_t i2s_writer_audio_config(i2s_writer_handle_t writer, struct i2s_writer_output_args *args) {
     i2s_chan_handle_t chan = writer->tx_chan;
     if (writer->chan_enable) {
         i2s_channel_disable(chan);
@@ -246,6 +246,6 @@ esp_err_t i2s_writer_audio_config(i2s_writer_handle_t *writer, struct i2s_writer
     return ESP_OK;
 }
 
-void i2s_writer_element_deinit(void *args) { i2s_writer_deinit((i2s_writer_handle_t *)args); }
+void i2s_writer_element_deinit(void *args) { i2s_writer_deinit((i2s_writer_handle_t)args); }
 
 const amp_element_interface_t *i2s_writer_el_interface() { return &(i2s_amp_element_interface); }

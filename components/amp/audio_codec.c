@@ -3,6 +3,7 @@
 #include "esp_audio_simple_dec_default.h"
 #include "esp_log.h"
 
+#include "amp/amp_mem.h"
 #include "amp/audio_codec.h"
 #include "amp/ringbuf.h"
 #include "element_priv.h"
@@ -52,10 +53,10 @@ static void audio_codec_task_run(void *args) {
     }
 
     size_t in_buf_size = 2048;
-    uint8_t *in_buf = malloc(sizeof(uint8_t) * in_buf_size);
+    uint8_t *in_buf = amp_malloc(sizeof(uint8_t) * in_buf_size);
 
     size_t out_buf_size = 2048;
-    uint8_t *out_buf = malloc(sizeof(uint8_t) * out_buf_size);
+    uint8_t *out_buf = amp_malloc(sizeof(uint8_t) * out_buf_size);
 
     TickType_t read_wait = pdMS_TO_TICKS(100);
     TickType_t write_wait = pdMS_TO_TICKS(100);
@@ -88,7 +89,7 @@ static void audio_codec_task_run(void *args) {
             } else if (ESP_AUDIO_ERR_BUFF_NOT_ENOUGH == err) {
                 ESP_LOGW(TAG, "buffer not enough");
                 size_t ns = out.needed_size + out_buf_size;
-                out_buf = realloc(out_buf, ns);
+                out_buf = amp_realloc(out_buf, ns);
                 out.buffer = out_buf;
                 out.len = ns;
                 out_buf_size = ns;
@@ -96,6 +97,11 @@ static void audio_codec_task_run(void *args) {
             }
         }
     }
+
+    if (in_buf)
+        amp_free(in_buf);
+    if (out_buf)
+        amp_free(out_buf);
 }
 
 static void audio_codec_set_input(void *args, ringbuf_handle_t rb_in) {
@@ -120,10 +126,9 @@ const amp_element_interface_t *audio_codec_el_interface() { return &audio_codec_
 esp_err_t audio_codec_init(audio_codec_handle_t **codec) {
     esp_audio_simple_dec_register_default();
     esp_audio_dec_register_default();
-    audio_codec_handle_t *c = malloc(sizeof(audio_codec_handle_t));
+    audio_codec_handle_t *c = amp_calloc(1, sizeof(audio_codec_handle_t));
     if (!c)
         return ESP_ERR_NO_MEM;
-    memset(c, 0, sizeof(audio_codec_handle_t));
 
     audio_codec_create_decoder(c, ESP_AUDIO_SIMPLE_DEC_TYPE_MP3);
     *codec = c;
@@ -139,7 +144,7 @@ void audio_codec_deinit(audio_codec_handle_t *codec) {
         ESP_LOGD(TAG, "close simple decoder: %p", codec->decoder);
         esp_audio_simple_dec_close(codec->decoder);
     }
-    free(codec);
+    amp_free(codec);
 }
 
 #if defined(APP_RUN_TEST_MODE)

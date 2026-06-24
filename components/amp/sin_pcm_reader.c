@@ -4,6 +4,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "amp/amp_mem.h"
 #include "amp/controller.h"
 #include "amp/ringbuf.h"
 #include "amp/sin_pcm_reader.h"
@@ -71,7 +72,7 @@ static void sin_pcm_reader_task(void *args) {
     const TickType_t max_wait = pdMS_TO_TICKS(1000);
 
     float phase = 0;
-    void *buf = malloc(buf_size);
+    void *buf = amp_malloc(buf_size);
     TickType_t wait_time = 0;
     while (true) {
         bool should_gen = sin_pcm_reader_do_event(reader, wait_time);
@@ -126,13 +127,12 @@ static const amp_element_interface_t sin_pcm_element_interface = {
 // #####################################################################
 
 esp_err_t sin_pcm_reader_init(struct sin_pcm_reader_cfg *cfg, sin_pcm_reader_handle_t **reader) {
-    sin_pcm_reader_handle_t *r = malloc(sizeof(sin_pcm_reader_handle_t));
+    sin_pcm_reader_handle_t *r = amp_calloc(1, sizeof(sin_pcm_reader_handle_t));
     if (!r) {
         return ESP_ERR_NO_MEM;
     }
     r->frames_size = cfg->frames_size;
     r->max_amplitude = cfg->max_amplitude;
-    memset(&(r->args), 0, sizeof(struct sin_pcm_audio_args));
     *reader = r;
     return ESP_OK;
 }
@@ -141,7 +141,7 @@ void sin_pcm_reader_deinit(sin_pcm_reader_handle_t *reader) {
     if (!reader) {
         return;
     }
-    free(reader);
+    amp_free(reader);
 }
 
 void sin_pcm_config_audio(sin_pcm_reader_handle_t *reader, const struct sin_pcm_audio_args *args) {

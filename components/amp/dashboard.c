@@ -1,12 +1,13 @@
 
 #include "amp/dashboard.h"
+#include "amp/amp_mem.h"
 
 struct amp_dashboard {
     _Atomic enum amp_state state;
 };
 
 esp_err_t amp_dashboard_init(amp_dashboard_handle_t **dashboard) {
-    amp_dashboard_handle_t *dash = malloc(sizeof(amp_dashboard_handle_t));
+    amp_dashboard_handle_t *dash = amp_calloc(1, sizeof(amp_dashboard_handle_t));
     if (!dash) {
         return ESP_ERR_NO_MEM;
     }
@@ -19,7 +20,7 @@ void amp_dashboard_deinit(amp_dashboard_handle_t *dashboard) {
     if (!dashboard) {
         return;
     }
-    free(dashboard);
+    amp_free(dashboard);
 }
 
 enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t *dashboard, enum amp_state new_state) {

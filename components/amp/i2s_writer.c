@@ -2,6 +2,7 @@
 #include "amp/controller.h"
 #include "esp_log.h"
 
+#include "amp/amp_mem.h"
 #include "amp/i2s_writer.h"
 #include "bsp.h"
 #include "element_priv.h"
@@ -88,7 +89,7 @@ static void i2s_writer_task(void *args) {
     TickType_t notify_wait = 0;
 
     size_t read_buf_size = 1024;
-    uint8_t *read_buf = malloc(sizeof(uint8_t) * read_buf_size);
+    uint8_t *read_buf = amp_malloc(sizeof(uint8_t) * read_buf_size);
     while (true) {
         bool should_send = i2s_writer_do_event(writer, notify_wait);
         if (!should_send) {
@@ -158,7 +159,7 @@ static const amp_element_interface_t i2s_amp_element_interface = {
 // #####################################################################
 
 esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t **writer) {
-    i2s_writer_handle_t *w = malloc(sizeof(i2s_writer_handle_t));
+    i2s_writer_handle_t *w = amp_calloc(1, sizeof(i2s_writer_handle_t));
     if (!w) {
         // no memory
         return ESP_ERR_NO_MEM;
@@ -196,7 +197,7 @@ void i2s_writer_deinit(i2s_writer_handle_t *writer) {
         }
     }
 
-    free(writer);
+    amp_free(writer);
 }
 
 esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t *writer, const uint8_t *data, size_t size) {

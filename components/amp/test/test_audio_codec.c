@@ -12,7 +12,7 @@ static const char *TAG = "test_amp_audio_codec";
 
 static void read_file_data_task(void *args) {
     const char *filename = "/storage/music/test.mp3";
-    RingbufHandle_t rb = args;
+    ringbuf_handle_t rb = args;
     TEST_ASSERT_NOT_NULL(rb);
 
     FILE *fp = fopen(filename, "rb");
@@ -33,7 +33,7 @@ static void read_file_data_task(void *args) {
             break;
         }
         // ESP_LOGI(TAG, "fread %s size: %d", filename, rc);
-        xRingbufferSend(rb, buf, rc, portMAX_DELAY);
+        rb_write(rb, (void *)buf, rc, portMAX_DELAY);
     }
     if (fp)
         fclose(fp);
@@ -65,8 +65,8 @@ TEST_CASE("Audio Codec run codec task", "[amp][audio_codec]") {
 
     while (true) {
         size_t item_size = 0;
-        void *item = xRingbufferReceive(rb_out, &item_size, portMAX_DELAY);
-        ESP_LOGI(TAG, "receive item size: %d", item_size);
-        vRingbufferReturnItem(rb_out, item);
+        // void *item = xRingbufferReceive(rb_out, &item_size, portMAX_DELAY);
+        // ESP_LOGI(TAG, "receive item size: %d", item_size);
+        // vRingbufferReturnItem(rb_out, item);
     }
 }

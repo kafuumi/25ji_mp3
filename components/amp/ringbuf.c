@@ -56,7 +56,7 @@ static esp_err_t rb_abort_write(ringbuf_handle_t rb);
 static void rb_release(SemaphoreHandle_t handle);
 
 ringbuf_handle_t rb_create(int block_size, int n_blocks) {
-    if (block_size < 2) {
+    if (n_blocks < 2) {
         ESP_LOGE(TAG, "Invalid size");
         return NULL;
     }

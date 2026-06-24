@@ -3,6 +3,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "amp/amp_mem.h"
 #include "amp/controller.h"
 #include "amp/i2s_writer.h"
 #include "amp/ringbuf.h"
@@ -53,7 +54,7 @@ static inline esp_err_t rb_list_realloc(rb_list_t *rb, size_t require_size) {
         if (new_size < require_size) {
             new_size = require_size;
         }
-        ringbuf_handle_t *items = realloc(rb->items, new_size * sizeof(ringbuf_handle_t));
+        ringbuf_handle_t *items = amp_realloc(rb->items, new_size * sizeof(ringbuf_handle_t));
         if (!items) {
             return ESP_ERR_NO_MEM;
         }
@@ -220,7 +221,7 @@ static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t
 }
 
 esp_err_t amp_controller_init(amp_controller_handle_t **controller) {
-    amp_controller_handle_t *c = malloc(sizeof(amp_controller_handle_t));
+    amp_controller_handle_t *c = amp_malloc(sizeof(amp_controller_handle_t));
     STAILQ_INIT(&(c->el_list));
     rb_list_init(&(c->rb_list));
     esp_err_t err = amp_controller_setup_event(c);
@@ -262,7 +263,7 @@ void amp_controller_deinit(amp_controller_handle_t *controller) {
             rb_destroy(rb);
     }
     rb_list_deinit(&controller->rb_list);
-    free(controller);
+    amp_free(controller);
 }
 
 esp_err_t amp_controller_append_reader(amp_controller_handle_t *controller, amp_element_handle_t *el,

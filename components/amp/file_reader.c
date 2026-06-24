@@ -4,6 +4,7 @@
 #include <sys/queue.h>
 #include <sys/stat.h>
 
+#include "amp/amp_mem.h"
 #include "amp/file_reader.h"
 #include "esp_log.h"
 
@@ -71,7 +72,7 @@ esp_err_t file_reader_read_dir(file_reader_handle_t *fl, const char *dir) {
         if (S_ISDIR(file_stat.st_mode)) {
             // dir
             ESP_LOGD(TAG, "entry %s is dir", full_path);
-            node = malloc(sizeof(struct audio_file_source_node));
+            node = amp_malloc(sizeof(struct audio_file_source_node));
             if (!node) {
                 err = ESP_ERR_NO_MEM;
                 break;
@@ -83,7 +84,7 @@ esp_err_t file_reader_read_dir(file_reader_handle_t *fl, const char *dir) {
             ESP_LOGD(TAG, "entry %s is file", full_path);
             const char *ext = strrchr(dir_entry->d_name, '.');
             if (ext && (strcmp(ext, ".mp3") == 0 || strcmp(ext, ".flac") == 0 || strcmp(ext, ".aac"))) {
-                node = malloc(sizeof(struct audio_file_source_node));
+                node = amp_malloc(sizeof(struct audio_file_source_node));
                 if (!node) {
                     err = ESP_ERR_NO_MEM;
                     break;
@@ -108,7 +109,7 @@ esp_err_t file_reader_read_dir(file_reader_handle_t *fl, const char *dir) {
 }
 
 esp_err_t file_reader_init(file_reader_handle_t **fr) {
-    file_reader_handle_t *f = malloc(sizeof(file_reader_handle_t));
+    file_reader_handle_t *f = amp_malloc(sizeof(file_reader_handle_t));
     if (!f)
         return ESP_ERR_NO_MEM;
 
@@ -130,6 +131,6 @@ void file_reader_deinit(file_reader_handle_t *fr) {
             continue;
         if (node->source.name)
             sdsfree((sds)node->source.name);
-        free(node);
+        amp_free(node);
     }
 }

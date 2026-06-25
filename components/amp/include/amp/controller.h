@@ -22,6 +22,7 @@ ESP_EVENT_DECLARE_BASE(AMP_EVENT_REPORT);
  */
 enum amp_event_report_id {
     AMP_EVENT_REPORT_FATAL, /*!< Fatal error reported by an element */
+    AMP_EVENT_REPORT_WRITE_DONE,
 };
 
 /**

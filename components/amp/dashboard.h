@@ -2,8 +2,10 @@
 #define _AMP_DASHBOARD_H_
 
 #include <stdatomic.h>
+#include <stdbool.h>
 
 #include "esp_err.h"
+#include "freertos/portmacro.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,11 +15,12 @@ extern "C" {
  * @brief Player state
  */
 enum amp_state {
-    AMP_STATE_INVALID, /*!< Invalid / unknown state */
-    AMP_STATE_READY,   /*!< Initialized, not playing */
-    AMP_STATE_PLAYING, /* playing music */
-    AMP_STATE_PAUSE,   /* pause state */
-    AMP_STATE_FATAL,   /* any error acour */
+    AMP_STATE_INVALID,      /*!< Invalid / unknown state */
+    AMP_STATE_READY,        /*!< Initialized, not playing */
+    AMP_STATE_PLAYING,      /* playing music */
+    AMP_STATE_WAITING_NEXT, /* a music source strem is end, waiting all component process finished */
+    AMP_STATE_PAUSE,        /* pause state */
+    AMP_STATE_FATAL,        /* any error acour */
 };
 
 /**
@@ -58,6 +61,20 @@ enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t dashboard, enum 
  * @return Current stored state
  */
 enum amp_state amp_dashboard_load_state(amp_dashboard_handle_t dashboard);
+
+/**
+ * @brief Atomically check current state is AMP_STATE_PLAYING
+ *
+ * @param dashboard  Dashboard handle
+ * @return true when current state is AMP_STATE_PLAYING
+ */
+bool amp_dashboard_is_playing(amp_dashboard_handle_t dashboard);
+
+BaseType_t amp_dashboard_set_done_count(amp_dashboard_handle_t dashboard, int size);
+
+void amp_dashboard_send_done(amp_dashboard_handle_t dashboard);
+
+BaseType_t amp_dashboard_take_done(amp_dashboard_handle_t dashboard, TickType_t timeout);
 
 #ifdef __cplusplus
 }

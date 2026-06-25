@@ -67,23 +67,27 @@ static void audio_codec_task_run(void *args) {
     esp_audio_simple_dec_out_t out_dec = {0};
     esp_err_t err;
 
+_read_loop:
     while (true) {
-        size_t in_size = rb_read(rb_in, (char *)in_buf, in_buf_size, read_wait);
-        if (in_size <= 0) {
+        int in_size = rb_read(rb_in, (char *)in_buf, in_buf_size, read_wait);
+        bool is_done = false;
+        if (RB_DONE == in_size) {
+            is_done = true;
+            ESP_LOGW(TAG, "read data is done");
+        } else if (in_size < 0) {
             ESP_LOGE(TAG, "read data from ringbuf fail: %d", in_size);
             continue;
+        } else {
+            ESP_LOGD(TAG, "read data from ringbuf size: %d", in_size);
         }
-
         raw_dec.buffer = in_buf;
-        raw_dec.len = in_size;
-        raw_dec.eos = false;
-        raw_dec.frame_recover = 0;
+        raw_dec.len = is_done ? 0 : in_size;
+        raw_dec.eos = is_done;
+        raw_dec.frame_recover = ESP_AUDIO_SIMPLE_DEC_RECOVERY_NONE;
 
-        while (raw_dec.len > 0) {
+        while (raw_dec.len > 0 || is_done) {
             // reset output and input
             raw_dec.consumed = 0;
-            out_dec.buffer = out_buf;
-            out_dec.len = out_buf_size;
             out_dec.needed_size = out_dec.decoded_size = 0;
 
             err = esp_audio_simple_dec_process(dec, &raw_dec, &out_dec);
@@ -99,6 +103,8 @@ static void audio_codec_task_run(void *args) {
                 ESP_LOGI(TAG, "realloc output buffer success, new size: %d bytes", ns);
                 out_buf = buf;
                 out_buf_size = ns;
+                out_dec.buffer = out_buf;
+                out_dec.len = out_buf_size;
                 continue;
             } else if (err < 0) {
                 ESP_LOGW(TAG, "decode fail: %d", err);
@@ -116,7 +122,11 @@ static void audio_codec_task_run(void *args) {
 
             raw_dec.buffer += raw_dec.consumed;
             raw_dec.len -= raw_dec.consumed;
-            continue;
+            if (is_done) {
+                rb_done_write(rb_out);
+                amp_dashboard_send_done(decoder->el_entry.dashboard);
+                goto _read_loop;
+            }
         }
     }
 

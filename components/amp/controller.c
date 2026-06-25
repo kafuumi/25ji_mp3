@@ -92,6 +92,7 @@ struct amp_controller {
     esp_event_loop_handle_t event_bus;
     esp_event_handler_instance_t report_evt;
     amp_dashboard_handle_t dashboard;
+    int el_size;
     amp_element_list_head_t el_list;
     rb_list_t rb_list;
 };
@@ -108,8 +109,32 @@ static esp_err_t inline element_task_run(amp_element_handle_t el) {
     return ESP_FAIL;
 }
 
+static void amp_controller_task_run(void *args) {
+    amp_controller_handle_t controller = args;
+    enum amp_state state = amp_dashboard_load_state(controller->dashboard);
+    if (state == AMP_STATE_WAITING_NEXT) {
+        int count = 0;
+        while (count < controller->el_size) {
+            if (amp_dashboard_take_done(controller->dashboard, portMAX_DELAY) == pdTRUE) {
+                count++;
+            }
+        }
+        // reset ringbuf
+        rb_list_t *rb_list = &controller->rb_list;
+        for (int i = 0; i < rb_list->size; ++i) {
+            rb_reset_is_done_write(rb_list->items[i]);
+        }
+    } else {
+        vTaskSuspend(NULL);
+    }
+}
+
 static void amp_controller_handle_report_event(void *args, esp_event_base_t base_evt, int32_t evt_id, void *evt) {
-    // TODO
+    amp_controller_handle_t controller = args;
+    TaskHandle_t task = controller->self;
+
+    // resume task to handle
+    vTaskResume(task);
 }
 
 static inline esp_err_t amp_controller_append(amp_controller_handle_t controller, amp_element_handle_t el,
@@ -295,6 +320,7 @@ esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, am
 esp_err_t amp_controller_run(amp_controller_handle_t controller) {
     amp_element_handle_t el;
     esp_err_t err;
+    int size = 0;
     // start all element
     STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
         err = element_task_run(el);
@@ -303,7 +329,20 @@ esp_err_t amp_controller_run(amp_controller_handle_t controller) {
             return err;
         }
         ESP_LOGI(TAG, "create element %s task success", el->name);
+        size++;
     }
+    if (amp_dashboard_set_done_count(controller->dashboard, size) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    controller->el_size = size;
+
+    TaskHandle_t self;
+    if (xTaskCreate(amp_controller_task_run, "controller", 4096, controller, 1, &self) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    // do not run
+    vTaskSuspend(self);
+    controller->self = self;
     return ESP_OK;
 }
 

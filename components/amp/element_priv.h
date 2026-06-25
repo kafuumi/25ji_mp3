@@ -5,8 +5,8 @@
 
 #include "esp_event.h"
 
-#include "amp/dashboard.h"
 #include "amp/element.h"
+#include "dashboard.h"
 
 // 外部操作事件
 ESP_EVENT_DECLARE_BASE(AMP_EVENT_ACTION);
@@ -24,16 +24,16 @@ struct amp_event_report_audio_args {
 };
 
 struct amp_element {
+    STAILQ_ENTRY(amp_element) stailq_entry;
+
     char *name;
     int stack_size;
+    enum amp_element_role role;
+    const amp_element_interface_t *intf;
+
     TaskHandle_t task;
     esp_event_handler_t event_bus;
     amp_dashboard_handle_t dashboard;
-    const amp_element_interface_t *intf;
-
-    enum amp_element_role role;
-
-    STAILQ_ENTRY(amp_element) stailq_entry;
 };
 
 #endif // _AMP_ELEMENT_PRIV_H_

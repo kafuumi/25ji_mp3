@@ -85,29 +85,28 @@ static void i2s_writer_task(void *args) {
     assert(rb);
     const TickType_t max_wait = pdMS_TO_TICKS(1000);
 
-    size_t data_size;
     TickType_t notify_wait = 0;
 
     size_t read_buf_size = 1024;
     uint8_t *read_buf = amp_malloc(sizeof(uint8_t) * read_buf_size);
     while (true) {
-        bool should_send = i2s_writer_do_event(writer, notify_wait);
-        if (!should_send) {
+        if (!i2s_writer_do_event(writer, notify_wait)) {
             // wait notify
             notify_wait = pdMS_TO_TICKS(100);
             continue;
         }
         notify_wait = 0;
         // write data to i2s
-        {
-            data_size = rb_read(rb, (char *)read_buf, read_buf_size, max_wait);
-            if (data_size == 0) {
-                ESP_LOGW(TAG, "ringbuf is empty, no item is received");
-                continue;
-            }
-            // write to i2s
-            i2s_writer_send_pcm(writer, read_buf, data_size);
+        int data_size = rb_read(rb, (char *)read_buf, read_buf_size, max_wait);
+        if (data_size == RB_DONE) {
+            amp_dashboard_send_done(writer->el_entry.dashboard);
+            continue;
+        } else if (data_size < 0) {
+            ESP_LOGW(TAG, "ringbuf is empty, no item is received");
+            continue;
         }
+        // write to i2s
+        i2s_writer_send_pcm(writer, read_buf, data_size);
     }
 }
 

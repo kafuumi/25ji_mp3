@@ -13,6 +13,8 @@
 
 #include "sds.h"
 
+#define EVENT_WAIT_TIME_MAX pdMS_TO_TICKS(100)
+
 static const char *TAG = "file_reader";
 
 struct audio_file_source_node {
@@ -36,6 +38,19 @@ static void file_reader_set_output(void *args, ringbuf_handle_t rb) {
     reader->rb = rb;
 }
 
+static inline bool file_reader_do_event(file_reader_handle_t reader, TickType_t wait_time) {
+    uint32_t notify = 0;
+    if (xTaskNotifyWait(0, ULONG_MAX, &notify, wait_time) == pdTRUE) {
+    }
+    return amp_dashboard_is_playing(reader->el_entry.dashboard);
+}
+
+static void _send_eos_event(file_reader_handle_t reader) {
+    amp_dashboard_handle_t dash = reader->el_entry.dashboard;
+    amp_dashboard_swap_status(dash, AMP_STATE_WAITING_NEXT);
+    amp_dashboard_send_done(dash);
+}
+
 static void file_reader_task_run(void *args) {
     file_reader_handle_t reader = args;
     ringbuf_handle_t rb = reader->rb;
@@ -43,39 +58,51 @@ static void file_reader_task_run(void *args) {
 
     size_t buf_size = 1024;
     uint8_t *buf = amp_malloc(sizeof(uint8_t) * buf_size);
+    TickType_t event_wait = EVENT_WAIT_TIME_MAX;
     TickType_t wait_time = pdMS_TO_TICKS(1000);
 
     int fd = 0;
-    const char *cur_file = NULL;
+    const struct audio_file_source *cur_file = NULL;
     while (true) {
-        if (fd <= 0) {
-            struct audio_file_source *af = file_reader_next(reader);
-            if (af == NULL || af->is_dir) {
-                continue;
-            }
-            cur_file = af->name;
-            fd = open(cur_file, O_RDONLY);
-            if (fd < 0) {
-                ESP_LOGE(TAG, "open file %s fail: %d(%s)", cur_file, errno, strerror(errno));
-                continue;
-            }
-            ESP_LOGI(TAG, "open file %s success, fd: %d", cur_file, fd);
+        /* do event */
+        if (!file_reader_do_event(reader, event_wait)) {
+            event_wait = EVENT_WAIT_TIME_MAX;
+            continue;
+        } else if (event_wait > 0) {
+            event_wait = 0;
         }
+        /* open file */
+        if (fd <= 0) {
+            cur_file = file_reader_next(reader);
+            if (cur_file == NULL || cur_file->is_dir) {
+                continue;
+            }
+            const char *name = cur_file->name;
+            fd = open(name, O_RDONLY);
+            if (fd < 0) {
+                ESP_LOGE(TAG, "open file %s fail: %d(%s)", name, errno, strerror(errno));
+                continue;
+            }
+            ESP_LOGI(TAG, "open file %s success, fd: %d", name, fd);
+        }
+        /* read data from file */
         ssize_t read_size = read(fd, buf, buf_size);
         if (read_size < 0) {
             // read error
-            ESP_LOGE(TAG, "read file %s fail: %d(%s)", cur_file, errno, strerror(errno));
+            ESP_LOGE(TAG, "read file %s fail: %d(%s)", cur_file->name, errno, strerror(errno));
             continue;
         } else if (read_size == 0) {
             // read finished
-            ESP_LOGI(TAG, "read file %s EOF", cur_file);
+            ESP_LOGI(TAG, "read file %s EOF", cur_file->name);
+            rb_done_write(rb);
             cur_file = NULL;
             close(fd);
             fd = 0;
+            _send_eos_event(reader);
             continue;
         }
-        ESP_LOGD(TAG, "read file %s success, size: %d", cur_file, read_size);
-        // send to ringbuf
+        ESP_LOGD(TAG, "read file %s success, size: %d", cur_file->name, read_size);
+        /* send data to ringbuf */
         int write_size = rb_write(rb, (char *)buf, read_size, wait_time);
         if (write_size < 0) {
             ESP_LOGE(TAG, "send data to ringbuf fail: %d", write_size);

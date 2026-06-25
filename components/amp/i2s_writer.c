@@ -159,7 +159,7 @@ static const amp_element_interface_t i2s_amp_element_interface = {
 // #####################################################################
 
 esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t *writer) {
-    i2s_writer_handle_t w = amp_calloc(1, sizeof(i2s_writer_handle_t));
+    i2s_writer_handle_t w = amp_calloc(1, sizeof(struct i2s_writer));
     if (!w) {
         // no memory
         return ESP_ERR_NO_MEM;

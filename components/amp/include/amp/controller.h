@@ -26,6 +26,9 @@ esp_err_t amp_controller_append_reader(amp_controller_handle_t controller, amp_e
 esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_element_handle_t el,
                                        const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg);
 
+esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, amp_element_handle_t el,
+                                          const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg);
+
 esp_err_t amp_controller_action_play(amp_controller_handle_t controller);
 
 esp_err_t amp_controller_action_pause(amp_controller_handle_t controller);

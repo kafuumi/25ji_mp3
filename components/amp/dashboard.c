@@ -7,7 +7,7 @@ struct amp_dashboard {
 };
 
 esp_err_t amp_dashboard_init(amp_dashboard_handle_t *dashboard) {
-    amp_dashboard_handle_t dash = amp_calloc(1, sizeof(amp_dashboard_handle_t));
+    amp_dashboard_handle_t dash = amp_calloc(1, sizeof(struct amp_dashboard));
     if (!dash) {
         return ESP_ERR_NO_MEM;
     }

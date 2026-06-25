@@ -221,7 +221,7 @@ static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t
 }
 
 esp_err_t amp_controller_init(amp_controller_handle_t *controller) {
-    amp_controller_handle_t c = amp_malloc(sizeof(amp_controller_handle_t));
+    amp_controller_handle_t c = amp_malloc(sizeof(struct amp_controller));
     STAILQ_INIT(&(c->el_list));
     rb_list_init(&(c->rb_list));
     esp_err_t err = amp_controller_setup_event(c);
@@ -275,6 +275,12 @@ esp_err_t amp_controller_append_reader(amp_controller_handle_t controller, amp_e
 esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_element_handle_t el,
                                        const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg) {
     el->role = AMP_ELEMENT_WRITER;
+    return amp_controller_append(controller, el, intf, cfg);
+}
+
+esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, amp_element_handle_t el,
+                                          const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg) {
+    el->role = AMP_ELEMENT_PROCESSOR;
     return amp_controller_append(controller, el, intf, cfg);
 }
 

@@ -148,7 +148,7 @@ const amp_element_interface_t *audio_codec_el_interface() { return &audio_codec_
 esp_err_t audio_codec_init(audio_codec_handle_t *codec) {
     esp_audio_simple_dec_register_default();
     esp_audio_dec_register_default();
-    audio_codec_handle_t c = amp_calloc(1, sizeof(audio_codec_handle_t));
+    audio_codec_handle_t c = amp_calloc(1, sizeof(struct audio_codec));
     if (!c)
         return ESP_ERR_NO_MEM;
 

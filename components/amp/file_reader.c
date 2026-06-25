@@ -179,7 +179,7 @@ esp_err_t file_reader_read_dir(file_reader_handle_t fl, const char *dir) {
 }
 
 esp_err_t file_reader_init(file_reader_handle_t *fr) {
-    file_reader_handle_t f = amp_malloc(sizeof(file_reader_handle_t));
+    file_reader_handle_t f = amp_malloc(sizeof(struct file_reader));
     if (!f)
         return ESP_ERR_NO_MEM;
 

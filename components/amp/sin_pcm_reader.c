@@ -65,7 +65,7 @@ static void sin_pcm_reader_task(void *args) {
 
     size_t rb_max_size = rb_get_size(rb);
     if (rb_max_size < buf_size) {
-        ESP_LOGE(TAG, "ringbuf max size(%zu) is less than frames_size * channel(%zu)", rb_max_size, buf_size);
+        ESP_LOGE(TAG, "ringbuf max size(%lu) is less than frames_size * channel(%lu)", rb_max_size, buf_size);
         vTaskDelete(NULL);
         return;
     }
@@ -83,13 +83,12 @@ static void sin_pcm_reader_task(void *args) {
         wait_time = 0;
 
         // generate pcm data
-        {
-            generate_sin_pcm_16bit(reader, (int16_t *)buf, &phase);
-            BaseType_t ret = rb_write(rb, buf, buf_size, max_wait);
-            if (ret != pdTRUE) {
-                ESP_LOGW(TAG, "send ringbuf fail: %d, send size: %zu", ret, buf_size);
-                continue;
-            }
+        generate_sin_pcm_16bit(reader, (int16_t *)buf, &phase);
+        int write_size = rb_write(rb, buf, buf_size, max_wait);
+        if (write_size <= 0) {
+            ESP_LOGW(TAG, "send to ringbuf fail: %d", write_size);
+        } else if (write_size < buf_size) {
+            ESP_LOGW(TAG, "send ringbuf size %d less than buf size %d", write_size, buf_size);
         }
     }
 }

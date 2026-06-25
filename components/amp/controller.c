@@ -263,6 +263,14 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
             rb_destroy(rb);
     }
     rb_list_deinit(&controller->rb_list);
+
+    if (controller->dashboard) {
+        amp_dashboard_deinit(controller->dashboard);
+    }
+    if (controller->event_bus) {
+        esp_event_loop_delete(controller->event_bus);
+    }
+
     amp_free(controller);
 }
 

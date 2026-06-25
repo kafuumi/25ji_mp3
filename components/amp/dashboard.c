@@ -1,16 +1,10 @@
 
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/semphr.h"
 
 #include "amp/amp_mem.h"
 #include "dashboard.h"
 
 static const char *TAG = "dashboard";
-struct amp_dashboard {
-    _Atomic enum amp_state state;
-    SemaphoreHandle_t done_count;
-};
 
 esp_err_t amp_dashboard_init(amp_dashboard_handle_t *dashboard) {
     amp_dashboard_handle_t dash = amp_calloc(1, sizeof(struct amp_dashboard));
@@ -51,17 +45,8 @@ bool amp_dashboard_is_playing(amp_dashboard_handle_t dashboard) {
     return atomic_load(&dashboard->state) == AMP_STATE_PLAYING;
 }
 
-BaseType_t amp_dashboard_set_done_count(amp_dashboard_handle_t dashboard, int size) {
-    SemaphoreHandle_t sem = xSemaphoreCreateCounting(size, 0);
-    if (!sem) {
-        ESP_LOGE(TAG, "create semaphore fail");
-        return pdFALSE;
+void amp_dashboard_send_done(amp_dashboard_handle_t dashboard) {
+    if (xSemaphoreGive(dashboard->done_count) != pdTRUE) {
+        ESP_LOGW(TAG, "give done count sem fail");
     }
-
-    dashboard->done_count = sem;
-    return pdTRUE;
 }
-
-void amp_dashboard_send_done(amp_dashboard_handle_t dashboard) {}
-
-BaseType_t amp_dashboard_take_done(amp_dashboard_handle_t dashboard, TickType_t timeout) { return 0; }

@@ -16,11 +16,21 @@ struct audio_codec {
 
     esp_audio_simple_dec_handle_t decoder; /* simple decoder. owner is self*/
     bool decode_opened;                    /* decoder open flag */
-    esp_audio_simple_dec_type_t dec_type;
+    enum amp_audio_media_type media_type;
 };
 
 static inline esp_err_t audio_codec_create_decoder(audio_codec_handle_t codec,
-                                                   const esp_audio_simple_dec_type_t dec_type) {
+                                                   const enum amp_audio_media_type media_type) {
+    esp_audio_simple_dec_type_t dec_type;
+    switch (media_type) {
+    case AUDIO_MEDIA_TYPE_MP3:
+        dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
+        break;
+    case AUDIO_MEDIA_TYPE_AAC:
+        dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_AAC;
+        break;
+    }
+
     esp_audio_simple_dec_cfg_t dec_cfg = {
         .dec_type = dec_type,
         .use_frame_dec = false,
@@ -41,6 +51,16 @@ static inline esp_err_t audio_codec_create_decoder(audio_codec_handle_t codec,
     return ESP_OK;
 }
 
+static esp_err_t _setup_decoder(audio_codec_handle_t codec) {
+    enum amp_audio_media_type media_type = codec->el_entry.dashboard->audio.media_type;
+    if (media_type != codec->media_type) {
+        codec->media_type = media_type;
+    } else if (codec->decoder && codec->decode_opened) {
+        return ESP_OK;
+    }
+    return audio_codec_create_decoder(codec, media_type);
+}
+
 static void audio_codec_task_run(void *args) {
     audio_codec_handle_t decoder = args;
     ringbuf_handle_t rb_in = decoder->rb_in;
@@ -48,6 +68,8 @@ static void audio_codec_task_run(void *args) {
     esp_audio_simple_dec_handle_t dec = decoder->decoder;
     assert(rb_in && rb_out);
     assert(dec);
+
+    bool is_first = true;
 
     size_t rb_out_size = rb_get_size(rb_out);
     if (rb_out_size) {
@@ -79,6 +101,14 @@ _read_loop:
             continue;
         } else {
             ESP_LOGD(TAG, "read data from ringbuf size: %d", in_size);
+        }
+
+        if (is_first) {
+            err = _setup_decoder(decoder);
+            if (ESP_OK != err) {
+                continue;
+            }
+            is_first = false;
         }
         raw_dec.buffer = in_buf;
         raw_dec.len = is_done ? 0 : in_size;
@@ -124,6 +154,7 @@ _read_loop:
             raw_dec.len -= raw_dec.consumed;
             if (is_done) {
                 rb_done_write(rb_out);
+                is_first = true;
                 amp_dashboard_send_done(decoder->el_entry.dashboard);
                 goto _read_loop;
             }
@@ -146,11 +177,14 @@ static void audio_codec_set_output(void *args, ringbuf_handle_t rb_out) {
     decoder->rb_out = rb_out;
 }
 
+static void audio_codec_el_deinit(void *args) { return audio_codec_deinit((audio_codec_handle_t)args); }
+
 static const amp_element_interface_t audio_codec_element_interface = {
-    .deinit = NULL,
+    .deinit = audio_codec_el_deinit,
     .set_input_rb = audio_codec_set_input,
     .set_output_rb = audio_codec_set_output,
     .task_run = audio_codec_task_run,
+    .setup_event_handler = NULL,
 };
 
 const amp_element_interface_t *audio_codec_el_interface() { return &audio_codec_element_interface; }
@@ -162,7 +196,6 @@ esp_err_t audio_codec_init(audio_codec_handle_t *codec) {
     if (!c)
         return ESP_ERR_NO_MEM;
 
-    audio_codec_create_decoder(c, ESP_AUDIO_SIMPLE_DEC_TYPE_MP3);
     *codec = c;
     ESP_LOGD(TAG, "initialize audio codec success");
     return ESP_OK;
@@ -179,6 +212,18 @@ void audio_codec_deinit(audio_codec_handle_t codec) {
     amp_free(codec);
 }
 
-#if defined(APP_RUN_TEST_MODE)
+volatile static bool is_registeied = false;
 
-#endif // APP_RUN_TEST_MODE
+esp_err_t audio_codec_register() {
+    if (!is_registeied) {
+        esp_audio_err_t err;
+        bool ok = (((err = esp_audio_dec_register_default()) == ESP_AUDIO_ERR_OK) &&
+                   (err = esp_audio_simple_dec_register_default() == ESP_AUDIO_ERR_OK));
+        if (ok) {
+            is_registeied = true;
+            return ESP_OK;
+        }
+        return err;
+    }
+    return ESP_OK;
+}

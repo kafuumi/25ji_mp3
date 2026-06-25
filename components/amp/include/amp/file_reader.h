@@ -4,11 +4,13 @@
 #include <stdbool.h>
 #include <sys/queue.h>
 
+#include "amp/audio_types.h"
 #include "esp_err.h"
 
 struct audio_file_source {
     const char *name;
     bool is_dir;
+    enum amp_audio_media_type media_type;
 };
 
 typedef struct file_reader *file_reader_handle_t;

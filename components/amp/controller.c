@@ -111,11 +111,12 @@ static esp_err_t inline element_task_run(amp_element_handle_t el) {
 
 static void amp_controller_task_run(void *args) {
     amp_controller_handle_t controller = args;
-    enum amp_state state = amp_dashboard_load_state(controller->dashboard);
+    amp_dashboard_handle_t dash = controller->dashboard;
+    enum amp_state state = amp_dashboard_load_state(dash);
     if (state == AMP_STATE_WAITING_NEXT) {
         int count = 0;
         while (count < controller->el_size) {
-            if (amp_dashboard_take_done(controller->dashboard, portMAX_DELAY) == pdTRUE) {
+            if (xSemaphoreTake(dash->done_count, portMAX_DELAY) == pdTRUE) {
                 count++;
             }
         }
@@ -331,7 +332,7 @@ esp_err_t amp_controller_run(amp_controller_handle_t controller) {
         ESP_LOGI(TAG, "create element %s task success", el->name);
         size++;
     }
-    if (amp_dashboard_set_done_count(controller->dashboard, size) != pdTRUE) {
+    if ((controller->dashboard->done_count = xSemaphoreCreateCounting(size, 0)) == NULL) {
         return ESP_FAIL;
     }
     controller->el_size = size;

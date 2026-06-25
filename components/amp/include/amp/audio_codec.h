@@ -12,9 +12,6 @@ void audio_codec_deinit(audio_codec_handle_t codec);
 
 const amp_element_interface_t *audio_codec_el_interface();
 
-#if defined(APP_RUN_TEST_MODE)
-/* test helper */
-
-#endif // APP_RUN_TEST_MODE
+esp_err_t audio_codec_register();
 
 #endif // _AMP_AUDIO_CODEC_H_

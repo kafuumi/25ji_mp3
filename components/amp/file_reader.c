@@ -15,6 +15,20 @@
 
 #define EVENT_WAIT_TIME_MAX pdMS_TO_TICKS(100)
 
+#define FILE_TYPE_NAME_MP3 ".mp3"
+#define FILE_TYPE_NAME_AAC ".aac"
+#define FILE_TYPE_NAME_FLAC ".flac"
+
+#define AUDIO_FILE_NODE_CREATE(var, err, type, on_fail)                                                                \
+    do {                                                                                                               \
+        var = amp_malloc(sizeof(struct audio_file_source_node));                                                       \
+        if (!var) {                                                                                                    \
+            err = ESP_ERR_NO_MEM;                                                                                      \
+            break;                                                                                                     \
+        }                                                                                                              \
+        var->source.media_type = type;                                                                                 \
+    } while (0)
+
 static const char *TAG = "file_reader";
 
 struct audio_file_source_node {
@@ -84,6 +98,9 @@ static void file_reader_task_run(void *args) {
                 continue;
             }
             ESP_LOGI(TAG, "open file %s success, fd: %d", name, fd);
+            amp_dashboard_handle_t dash = reader->el_entry.dashboard;
+            dash->audio.name = name;
+            dash->audio.media_type = cur_file->media_type;
         }
         /* read data from file */
         ssize_t read_size = read(fd, buf, buf_size);
@@ -180,11 +197,13 @@ esp_err_t file_reader_read_dir(file_reader_handle_t fl, const char *dir) {
             // file
             ESP_LOGD(TAG, "entry %s is file", full_path);
             const char *ext = strrchr(dir_entry->d_name, '.');
-            if (ext && (strcmp(ext, ".mp3") == 0 || strcmp(ext, ".flac") == 0 || strcmp(ext, ".aac"))) {
-                node = amp_malloc(sizeof(struct audio_file_source_node));
-                if (!node) {
-                    err = ESP_ERR_NO_MEM;
-                    break;
+            if (ext) {
+                if (strcasecmp(ext, FILE_TYPE_NAME_MP3)) {
+                    AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_MP3, break;);
+                } else if (strcasecmp(ext, FILE_TYPE_NAME_AAC)) {
+                    AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_AAC, break;);
+                } else if (strcasecmp(ext, FILE_TYPE_NAME_FLAC)) {
+                    AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_FLAC, break;);
                 }
             }
         }

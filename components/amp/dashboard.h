@@ -5,7 +5,10 @@
 #include <stdbool.h>
 
 #include "esp_err.h"
-#include "freertos/portmacro.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+#include "amp/audio_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,6 +24,20 @@ enum amp_state {
     AMP_STATE_WAITING_NEXT, /* a music source strem is end, waiting all component process finished */
     AMP_STATE_PAUSE,        /* pause state */
     AMP_STATE_FATAL,        /* any error acour */
+};
+
+struct amp_audio_info {
+    const char *name;
+    int sample_rate;
+    enum amp_audio_media_type media_type;
+    enum amp_audio_channel channel;
+    enum amp_audio_bit_width bit_width;
+};
+
+struct amp_dashboard {
+    _Atomic enum amp_state state;
+    SemaphoreHandle_t done_count;
+    volatile struct amp_audio_info audio;
 };
 
 /**
@@ -70,11 +87,7 @@ enum amp_state amp_dashboard_load_state(amp_dashboard_handle_t dashboard);
  */
 bool amp_dashboard_is_playing(amp_dashboard_handle_t dashboard);
 
-BaseType_t amp_dashboard_set_done_count(amp_dashboard_handle_t dashboard, int size);
-
 void amp_dashboard_send_done(amp_dashboard_handle_t dashboard);
-
-BaseType_t amp_dashboard_take_done(amp_dashboard_handle_t dashboard, TickType_t timeout);
 
 #ifdef __cplusplus
 }

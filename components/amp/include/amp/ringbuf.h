@@ -23,12 +23,11 @@
  */
 
 #if !defined(_AMP_RINGBUF_H_)
+#define _AMP_RINGBUF_H_
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "freertos/semphr.h"
-#include "freertos/task.h"
 #include <stdint.h>
+
+#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -129,11 +128,15 @@ int rb_get_size(ringbuf_handle_t rb);
  *             If `buf` argument provided is `NULL`, then ringbuffer do pseudo reads by simply advancing pointers.
  *
  * @param[in]  rb             The Ringbuffer handle
- * @param      buf            The buffer pointer to read out data
+ * @param      buf            The buffer pointer to read out data. if is NULL, the len data will be drop
  * @param[in]  len            The length request
  * @param[in]  ticks_to_wait  The ticks to wait
  *
- * @return     Number of bytes read
+ * @return                 Number of bytes read
+ *       - RB_FAIL         input params is invalid
+ *       - RB_TIMEOUT      read data timeout
+ *       - RB_DONE         this ringbuf set do is_done_write
+ *       _ RB_ABORT        this ringbuf set abort_read
  */
 int rb_read(ringbuf_handle_t rb, char *buf, int len, TickType_t ticks_to_wait);
 
@@ -146,7 +149,11 @@ int rb_read(ringbuf_handle_t rb, char *buf, int len, TickType_t ticks_to_wait);
  * @param[in]  len            The length
  * @param[in]  ticks_to_wait  The ticks to wait
  *
- * @return     Number of bytes written
+ * @return              Number of bytes written
+ *      - RB_FAIL       input params is invalid
+ *      - RB_TIMEOUT    write data timeout
+ *      - RB_DONE       this ringbuf is set is_done_write
+ *      - RB_ABORT      this ringbuf is set abort_write
  */
 int rb_write(ringbuf_handle_t rb, char *buf, int len, TickType_t ticks_to_wait);
 

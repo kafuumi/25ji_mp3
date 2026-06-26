@@ -14,6 +14,7 @@ enum amp_audio_channel {
 };
 
 enum amp_audio_media_type {
+    AUDIO_MEDIA_TYPE_NONE,
     AUDIO_MEDIA_TYPE_MP3,
     AUDIO_MEDIA_TYPE_AAC,
     AUDIO_MEDIA_TYPE_FLAC,

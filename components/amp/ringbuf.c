@@ -26,6 +26,7 @@
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 
@@ -253,7 +254,7 @@ int rb_write(ringbuf_handle_t rb, char *buf, int buf_len, TickType_t ticks_to_wa
     int total_write_size = 0;
     int ret_val = 0;
 
-    if (rb == NULL || buf == NULL) {
+    if (rb == NULL) {
         return RB_FAIL;
     }
 

@@ -229,7 +229,9 @@ int rb_read(ringbuf_handle_t rb, char *buf, int buf_len, TickType_t ticks_to_wai
         buf_len -= read_size;
         rb->fill_cnt -= read_size;
         total_read_size += read_size;
-        buf += read_size;
+        if (buf) {
+            buf += read_size;
+        }
         rb_release(rb->lock);
         if (buf_len == 0) {
             break;
@@ -293,18 +295,24 @@ int rb_write(ringbuf_handle_t rb, char *buf, int buf_len, TickType_t ticks_to_wa
         if ((rb->p_w + write_size) > (rb->p_o + rb->size)) {
             int wlen1 = rb->p_o + rb->size - rb->p_w;
             int wlen2 = write_size - wlen1;
-            memcpy(rb->p_w, buf, wlen1);
-            memcpy(rb->p_o, buf + wlen1, wlen2);
+            if (buf) {
+                memcpy(rb->p_w, buf, wlen1);
+                memcpy(rb->p_o, buf + wlen1, wlen2);
+            }
             rb->p_w = rb->p_o + wlen2;
         } else {
-            memcpy(rb->p_w, buf, write_size);
+            if (buf) {
+                memcpy(rb->p_w, buf, write_size);
+            }
             rb->p_w = rb->p_w + write_size;
         }
 
         buf_len -= write_size;
         rb->fill_cnt += write_size;
         total_write_size += write_size;
-        buf += write_size;
+        if (buf) {
+            buf += write_size;
+        }
         rb_release(rb->lock);
         if (buf_len == 0) {
             break;

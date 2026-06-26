@@ -1,5 +1,6 @@
 set(srcs "controller.c"
          "i2s_writer.c"
+         "devnull_writer.c"
          "sin_pcm_reader.c"
          "file_reader.c"
          "audio_codec.c"

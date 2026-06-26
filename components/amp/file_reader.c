@@ -198,13 +198,17 @@ esp_err_t file_reader_read_dir(file_reader_handle_t fl, const char *dir) {
             ESP_LOGD(TAG, "entry %s is file", full_path);
             const char *ext = strrchr(dir_entry->d_name, '.');
             if (ext) {
-                if (strcasecmp(ext, FILE_TYPE_NAME_MP3)) {
+                if (strcasecmp(ext, FILE_TYPE_NAME_MP3) == 0) {
                     AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_MP3, break;);
-                } else if (strcasecmp(ext, FILE_TYPE_NAME_AAC)) {
+                } else if (strcasecmp(ext, FILE_TYPE_NAME_AAC) == 0) {
                     AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_AAC, break;);
-                } else if (strcasecmp(ext, FILE_TYPE_NAME_FLAC)) {
+                } else if (strcasecmp(ext, FILE_TYPE_NAME_FLAC) == 0) {
                     AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_FLAC, break;);
+                } else {
+                    ESP_LOGW(TAG, "file %s is not audio file, ignore", full_path);
                 }
+            } else {
+                ESP_LOGW(TAG, "file %s ext is empty, ignore", full_path);
             }
         }
         if (node) {
@@ -249,4 +253,5 @@ void file_reader_deinit(file_reader_handle_t fr) {
             sdsfree((sds)node->source.name);
         amp_free(node);
     }
+    amp_free(fr);
 }

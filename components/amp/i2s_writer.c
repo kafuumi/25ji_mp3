@@ -146,7 +146,10 @@ static esp_err_t i2s_writer_setup_event(void *args, esp_event_loop_handle_t even
     return ESP_OK;
 }
 
+static void i2s_writer_el_deinit(void *args) { i2s_writer_deinit((i2s_writer_handle_t)args); }
+
 static const amp_element_interface_t i2s_amp_element_interface = {
+    .deinit = i2s_writer_el_deinit,
     .task_run = i2s_writer_task,
     .set_input_rb = i2s_writer_set_input,
     .set_output_rb = NULL,
@@ -244,7 +247,5 @@ esp_err_t i2s_writer_audio_config(i2s_writer_handle_t writer, struct i2s_writer_
     }
     return ESP_OK;
 }
-
-void i2s_writer_element_deinit(void *args) { i2s_writer_deinit((i2s_writer_handle_t)args); }
 
 const amp_element_interface_t *i2s_writer_el_interface() { return &(i2s_amp_element_interface); }

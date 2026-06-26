@@ -18,7 +18,7 @@ TEST_CASE("File Reader load all file info", "[amp][file_reader]") {
     esp_err_t err = file_reader_init(&fr);
     TEST_ASSERT_EQUAL(ESP_OK, err);
     TEST_ASSERT_NOT_NULL(fr);
-    err = file_reader_read_dir(fr, "/storage");
+    err = file_reader_read_dir(fr, "/storage/music");
     TEST_ASSERT_EQUAL(ESP_OK, err);
 
     struct audio_file_source *src = NULL;

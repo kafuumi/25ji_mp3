@@ -21,13 +21,16 @@ struct audio_codec {
 
 static inline esp_err_t audio_codec_create_decoder(audio_codec_handle_t codec,
                                                    const enum amp_audio_media_type media_type) {
-    esp_audio_simple_dec_type_t dec_type;
+    esp_audio_simple_dec_type_t dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
     switch (media_type) {
     case AUDIO_MEDIA_TYPE_MP3:
         dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
         break;
     case AUDIO_MEDIA_TYPE_AAC:
         dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_AAC;
+        break;
+    case AUDIO_MEDIA_TYPE_FLAC:
+        dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_FLAC;
         break;
     }
 
@@ -65,9 +68,8 @@ static void audio_codec_task_run(void *args) {
     audio_codec_handle_t decoder = args;
     ringbuf_handle_t rb_in = decoder->rb_in;
     ringbuf_handle_t rb_out = decoder->rb_out;
-    esp_audio_simple_dec_handle_t dec = decoder->decoder;
+    esp_audio_simple_dec_handle_t dec = NULL;
     assert(rb_in && rb_out);
-    assert(dec);
 
     bool is_first = true;
 
@@ -87,6 +89,9 @@ static void audio_codec_task_run(void *args) {
 
     esp_audio_simple_dec_raw_t raw_dec = {0};
     esp_audio_simple_dec_out_t out_dec = {0};
+    out_dec.buffer = out_buf;
+    out_dec.len = out_buf_size;
+
     esp_err_t err;
 
 _read_loop:
@@ -108,6 +113,7 @@ _read_loop:
             if (ESP_OK != err) {
                 continue;
             }
+            dec = decoder->decoder;
             is_first = false;
         }
         raw_dec.buffer = in_buf;

@@ -4,6 +4,7 @@
 - This is an ESP-IDF firmware project. Source the ESP-IDF environment first, then run `idf.py` from the repo root.
 - Primary verification for the main firmware is `idf.py build`.
 - Change Kconfig settings through `idf.py menuconfig`; `sdkconfig` is generated and `.gitignore` excludes `sdkconfig.*`.
+- **NEVER commit or `git commit` unless the user explicitly asks you to.** Do not stage (`git add`) or commit code on your own initiative.
 
 ## Project Shape
 - Root `CMakeLists.txt` enables `CMAKE_EXPORT_COMPILE_COMMANDS` and `idf_build_set_property(MINIMAL_BUILD ON)`.

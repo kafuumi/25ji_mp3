@@ -54,7 +54,7 @@ void amp_controller_deinit(amp_controller_handle_t controller);
  *     - ESP_FAIL                Failed to append the element
  */
 esp_err_t amp_controller_append_reader(amp_controller_handle_t controller, amp_element_handle_t el,
-                                       const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg);
+                                       const amp_element_task_config_t *cfg);
 
 /**
  * @brief Append a writer element to the controller pipeline
@@ -70,7 +70,7 @@ esp_err_t amp_controller_append_reader(amp_controller_handle_t controller, amp_e
  *     - ESP_FAIL                Failed to append the element
  */
 esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_element_handle_t el,
-                                       const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg);
+                                       const amp_element_task_config_t *cfg);
 
 /**
  * @brief Append a processor element to the controller pipeline
@@ -86,7 +86,7 @@ esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_e
  *     - ESP_FAIL                Failed to append the element
  */
 esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, amp_element_handle_t el,
-                                          const amp_element_interface_t *intf, const struct amp_element_task_cfg *cfg);
+                                          const amp_element_task_config_t *cfg);
 
 /**
  * @brief Switch the controller to playing state

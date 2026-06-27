@@ -8,22 +8,22 @@
 #include "amp/element.h"
 #include "esp_err.h"
 
-struct audio_file_source {
+typedef struct {
     const char *name;
     bool is_dir;
     enum amp_audio_media_type media_type;
-};
+} amp_audio_file_source_t;
 
-typedef struct file_reader *file_reader_handle_t;
+typedef struct file_reader *amp_file_reader_handle_t;
 
-esp_err_t file_reader_init(file_reader_handle_t *fr);
+esp_err_t amp_file_reader_init(amp_file_reader_handle_t *fr);
 
-void file_reader_deinit(file_reader_handle_t fr);
+void amp_file_reader_deinit(amp_file_reader_handle_t fr);
 
-struct audio_file_source *file_reader_next(file_reader_handle_t fl);
+amp_audio_file_source_t *amp_file_reader_next(amp_file_reader_handle_t fl);
 
-esp_err_t file_reader_read_dir(file_reader_handle_t fl, const char *dir);
+esp_err_t amp_file_reader_read_dir(amp_file_reader_handle_t fl, const char *dir);
 
-const amp_element_interface_t *file_reader_el_interface();
+const amp_element_interface_t *amp_file_reader_get_element_interface(void);
 
 #endif // _AMP_FILE_READER_H_

@@ -11,13 +11,15 @@ ESP_EVENT_DECLARE_BASE(AMP_EVENT_REPORT);
  * @brief Event IDs reported by internal amp elements
  */
 enum amp_event_report_id {
-    AMP_EVENT_REPORT_FATAL, /*!< Fatal error reported by an element */
-    AMP_EVENT_REPORT_EOS,
-    AMP_EVENT_REPORT_MEDIA_TYPE,
-    AMP_EVENT_REPORT_MEDIA_DETAIL,
+    AMP_EVENT_REPORT_FATAL,        /*!< Fatal error reported by an element */
+    AMP_EVENT_REPORT_STREAM_EOS,   /*!< End of stream reported by reader */
+    AMP_EVENT_REPORT_AUDIO_FORMAT, /*!< Audio format change (media type, sample rate, etc.) */
+    AMP_EVENT_REPORT_AUDIO_DETAIL, /*!< Audio detail update (bit width, channels, etc.) */
 };
 
-// 外部操作事件
+/**
+ * @brief External action event base
+ */
 ESP_EVENT_DECLARE_BASE(AMP_EVENT_ACTION);
 
 enum amp_event_action_id {

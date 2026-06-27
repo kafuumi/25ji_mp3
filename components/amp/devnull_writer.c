@@ -5,7 +5,7 @@
 #include "element_priv.h"
 #include "esp_log.h"
 
-#define MAX_WAIT_TIME_EVENT pdMS_TO_TICKS(500)
+#define AMP_DEVNULL_WRITER_EVENT_WAIT_TICKS pdMS_TO_TICKS(500)
 
 static const char *TAG = "devnull_writer";
 
@@ -14,75 +14,74 @@ struct devnull_writer {
     ringbuf_handle_t rb_in;
 };
 
-struct devnull_writer_task_state {
-    enum amp_state state;
-    TickType_t wait_event_time;
-    bool stop_task;
-    bool wait_eos_done;
-};
+typedef struct {
+    enum amp_state cached_state;
+    TickType_t event_wait_ticks;
+    bool stop_requested;
+    bool waiting_eos_done;
+} amp_devnull_writer_task_state_t;
 
-static bool devnull_writer_receive_event(devnull_writer_handle_t writer, struct devnull_writer_task_state *task_state) {
+static bool amp_devnull_writer_process_notify(amp_devnull_writer_handle_t writer,
+                                              amp_devnull_writer_task_state_t *state) {
     uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->wait_event_time) == pdTRUE) {
-        ESP_LOGI(TAG, "receive event notify: %lu", notify);
+    if (xTaskNotifyWait(0, ULONG_MAX, &notify, state->event_wait_ticks) == pdTRUE) {
+        ESP_LOGD(TAG, "received notify: 0x%lx", notify);
         if (notify & NOTIFY_VALUE_MASK_STATE) {
-            task_state->state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+            state->cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
         }
         if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
-            task_state->wait_eos_done = false;
+            state->waiting_eos_done = false;
         }
     }
-    bool notplay;
-    if (task_state->wait_eos_done) {
-        notplay = true;
+    bool should_wait;
+    if (state->waiting_eos_done) {
+        should_wait = true;
     } else {
-        notplay = task_state->state != AMP_STATE_PLAYING;
+        should_wait = state->cached_state != AMP_STATE_PLAYING;
     }
 
-    if (notplay) {
-        if (task_state->wait_event_time <= 0) {
-            task_state->wait_event_time = MAX_WAIT_TIME_EVENT;
+    if (should_wait) {
+        if (state->event_wait_ticks <= 0) {
+            state->event_wait_ticks = AMP_DEVNULL_WRITER_EVENT_WAIT_TICKS;
         }
-    } else if (task_state->wait_event_time > 0) {
-        task_state->wait_event_time = 0;
+    } else if (state->event_wait_ticks > 0) {
+        state->event_wait_ticks = 0;
     }
-    return notplay;
+    return should_wait;
 }
 
-static void devnull_writer_task(void *args) {
-    devnull_writer_handle_t writer = args;
+static void amp_devnull_writer_task(void *args) {
+    amp_devnull_writer_handle_t writer = args;
     ringbuf_handle_t rb = writer->rb_in;
     assert(rb);
 
-    struct devnull_writer_task_state task_state = {
-        .state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
-        .wait_event_time = MAX_WAIT_TIME_EVENT,
-        .stop_task = false,
-        .wait_eos_done = false,
+    amp_devnull_writer_task_state_t task_state = {
+        .cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
+        .event_wait_ticks = AMP_DEVNULL_WRITER_EVENT_WAIT_TICKS,
+        .stop_requested = false,
+        .waiting_eos_done = false,
     };
-    TickType_t wait_read_time = pdMS_TO_TICKS(1000);
+    TickType_t read_wait_ticks = pdMS_TO_TICKS(1000);
     const int read_size = 1024;
 
     while (true) {
-        if (task_state.stop_task) {
+        if (task_state.stop_requested) {
             break;
         }
-        if (devnull_writer_receive_event(writer, &task_state)) {
+        if (amp_devnull_writer_process_notify(writer, &task_state)) {
             continue;
         }
-        // mock
-        vTaskDelay(pdMS_TO_TICKS(10));
-        int consumed = rb_read(rb, NULL, read_size, wait_read_time);
+        int consumed = rb_read(rb, NULL, read_size, read_wait_ticks);
         if (RB_DONE == consumed) {
-            if (!task_state.wait_eos_done) {
-                ESP_LOGW(TAG, "input ringbuf is done write");
+            if (!task_state.waiting_eos_done) {
+                ESP_LOGI(TAG, "input ringbuf done");
                 AMP_EL_SEND_DONE(TAG, writer, el_entry);
-                task_state.wait_eos_done = true;
+                task_state.waiting_eos_done = true;
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
             continue;
         } else if (RB_ABORT == consumed) {
-            ESP_LOGW(TAG, "input ringbuf is abort read");
+            ESP_LOGW(TAG, "input ringbuf aborted");
             continue;
         } else if (RB_TIMEOUT == consumed) {
             ESP_LOGW(TAG, "read data from input ringbuf timeout");
@@ -91,34 +90,36 @@ static void devnull_writer_task(void *args) {
             ESP_LOGW(TAG, "read data from input ringbuf fail");
             continue;
         } else {
-            ESP_LOGD(TAG, "read input ringbuf success, size: %d", consumed);
+            ESP_LOGD(TAG, "read from ringbuf: %d bytes", consumed);
         }
     }
 
     vTaskDelete(NULL);
 }
 
-static void devnull_writer_set_input(void *args, ringbuf_handle_t rb) {
-    devnull_writer_handle_t writer = args;
+static void amp_devnull_writer_set_input(void *args, ringbuf_handle_t rb) {
+    amp_devnull_writer_handle_t writer = args;
     writer->rb_in = rb;
 }
 
-static void devnull_writer_element_deinit(void *args) { devnull_writer_deinit((devnull_writer_handle_t)args); }
+static void amp_devnull_writer_element_deinit(void *args) {
+    amp_devnull_writer_deinit((amp_devnull_writer_handle_t)args);
+}
 
-static const amp_element_interface_t devnull_writer_element_interface = {
-    .deinit = devnull_writer_element_deinit,
-    .task_run = devnull_writer_task,
-    .set_input_rb = devnull_writer_set_input,
+static const amp_element_interface_t amp_devnull_writer_element_interface = {
+    .deinit = amp_devnull_writer_element_deinit,
+    .run_task = amp_devnull_writer_task,
+    .set_input_rb = amp_devnull_writer_set_input,
     .set_output_rb = NULL,
-    .setup_event_handler = NULL,
+    .register_events = NULL,
 };
 
-esp_err_t devnull_writer_init(devnull_writer_handle_t *writer) {
+esp_err_t amp_devnull_writer_init(amp_devnull_writer_handle_t *writer) {
     if (!writer) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    devnull_writer_handle_t w = amp_calloc(1, sizeof(struct devnull_writer));
+    amp_devnull_writer_handle_t w = amp_calloc(1, sizeof(struct devnull_writer));
     if (!w) {
         return ESP_ERR_NO_MEM;
     }
@@ -127,11 +128,13 @@ esp_err_t devnull_writer_init(devnull_writer_handle_t *writer) {
     return ESP_OK;
 }
 
-void devnull_writer_deinit(devnull_writer_handle_t writer) {
+void amp_devnull_writer_deinit(amp_devnull_writer_handle_t writer) {
     if (!writer) {
         return;
     }
     amp_free(writer);
 }
 
-const amp_element_interface_t *devnull_writer_el_interface() { return &devnull_writer_element_interface; }
+const amp_element_interface_t *amp_devnull_writer_get_element_interface(void) {
+    return &amp_devnull_writer_element_interface;
+}

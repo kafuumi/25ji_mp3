@@ -4,12 +4,12 @@
 #include "amp/element.h"
 #include "esp_err.h"
 
-typedef struct devnull_writer *devnull_writer_handle_t;
+typedef struct devnull_writer *amp_devnull_writer_handle_t;
 
-esp_err_t devnull_writer_init(devnull_writer_handle_t *writer);
+esp_err_t amp_devnull_writer_init(amp_devnull_writer_handle_t *writer);
 
-void devnull_writer_deinit(devnull_writer_handle_t writer);
+void amp_devnull_writer_deinit(amp_devnull_writer_handle_t writer);
 
-const amp_element_interface_t *devnull_writer_el_interface();
+const amp_element_interface_t *amp_devnull_writer_get_element_interface(void);
 
 #endif // _AMP_DEVNULL_WRITER_H_

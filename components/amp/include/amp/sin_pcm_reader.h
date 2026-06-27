@@ -3,37 +3,28 @@
 
 #include "esp_err.h"
 
+#include "amp/audio_types.h"
 #include "amp/controller.h"
 
-enum sin_pcm_bit_width {
-    PCM_BIT_WIDTH_8BIT,
-    PCM_BIT_WIDTH_16BIT,
-};
-
-enum sin_pcm_channel {
-    PCM_CHANNEL_MONO = 1,
-    PCM_CHANNEL_STEREO = 2,
-};
-
-struct sin_pcm_audio_args {
+typedef struct {
     int freq;
     int sample_rate;
     int volume;
-    enum sin_pcm_bit_width bit_width;
-    enum sin_pcm_channel channel;
-};
+    enum amp_audio_bit_width bit_width;
+    enum amp_audio_channel channel;
+} amp_sine_pcm_audio_config_t;
 
-struct sin_pcm_reader_cfg {
+typedef struct {
     int max_amplitude;
     size_t frames_size;
-};
+} amp_sine_pcm_reader_config_t;
 
-typedef struct sin_pcm_reader *sin_pcm_reader_handle_t;
+typedef struct sin_pcm_reader *amp_sine_pcm_reader_handle_t;
 
-esp_err_t sin_pcm_reader_init(struct sin_pcm_reader_cfg *cfg, sin_pcm_reader_handle_t *reader);
+esp_err_t amp_sine_pcm_reader_init(amp_sine_pcm_reader_config_t *cfg, amp_sine_pcm_reader_handle_t *reader);
 
-void sin_pcm_config_audio(sin_pcm_reader_handle_t reader, const struct sin_pcm_audio_args *args);
+void amp_sine_pcm_reader_set_audio_config(amp_sine_pcm_reader_handle_t reader, const amp_sine_pcm_audio_config_t *args);
 
-const amp_element_interface_t *sin_pcm_reader_el_interface();
+const amp_element_interface_t *amp_sine_pcm_reader_get_element_interface(void);
 
-#endif // _AMP_SIN_PCM_READER_
+#endif // _AMP_SIN_PCM_READER_H_

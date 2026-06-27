@@ -9,10 +9,9 @@
 #include "element_priv.h"
 #include "utils/esp_utils.h"
 
-#define MAX_WAIT_TIME_EVENT pdMS_TO_TICKS(100)
-#define MAX_WAIT_TIME_READ pdMS_TO_TICKS(1000)
-
-#define I2S_WRITE_RETRY_COUNT 3
+#define AMP_I2S_WRITER_EVENT_WAIT_TICKS pdMS_TO_TICKS(100)
+#define AMP_I2S_WRITER_READ_WAIT_TICKS pdMS_TO_TICKS(1000)
+#define AMP_I2S_WRITER_WRITE_RETRY_COUNT 3
 
 static const char *TAG = "i2s_writer";
 
@@ -24,7 +23,16 @@ struct i2s_writer {
     i2s_chan_handle_t tx_chan;
 };
 
-static esp_err_t _i2s_driver_init(i2s_writer_handle_t ctx, struct i2s_writer_output_args *args) {
+typedef struct {
+    enum amp_state cached_state;
+    TickType_t event_wait_ticks;
+    bool stop_requested;
+    bool waiting_eos_done;
+} amp_i2s_writer_task_state_t;
+
+static esp_err_t amp_i2s_writer_write_pcm(amp_i2s_writer_handle_t writer, const uint8_t *data, size_t size);
+
+static esp_err_t _i2s_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s_writer_output_config_t *args) {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(ctx->i2s_port, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
     i2s_chan_handle_t tx_chan = NULL;
@@ -35,7 +43,7 @@ static esp_err_t _i2s_driver_init(i2s_writer_handle_t ctx, struct i2s_writer_out
     }
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(args->sample_rate),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slog_bit_width, args->slot_mode),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slot_bit_width, args->slot_mode),
         .gpio_cfg =
             {
                 .bclk = BSP_PIN_I2S_BCK,
@@ -67,161 +75,135 @@ cleanup:
     return err;
 }
 
-struct i2s_writer_task_state {
-    enum amp_state state;
-    bool wait_eos_done;
-    bool task_stop;
-    TickType_t wait_event_time;
-};
-
-inline static bool i2s_writer_receive_event(i2s_writer_handle_t writer, struct i2s_writer_task_state *task_state) {
+static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, amp_i2s_writer_task_state_t *state) {
     uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->wait_event_time) == pdTRUE) {
-        ESP_LOGI(TAG, "receive event notify: %lu", notify);
+    if (xTaskNotifyWait(0, ULONG_MAX, &notify, state->event_wait_ticks) == pdTRUE) {
+        ESP_LOGD(TAG, "received notify: 0x%lx", notify);
         if (notify & NOTIFY_VALUE_MASK_STATE) {
-            task_state->state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+            state->cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
         }
         if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
-            task_state->wait_eos_done = false;
+            state->waiting_eos_done = false;
         }
     }
-    bool notplay;
-    if (task_state->wait_eos_done) {
-        notplay = true;
+    bool should_wait;
+    if (state->waiting_eos_done) {
+        should_wait = true;
     } else {
-        notplay = task_state->state != AMP_STATE_PLAYING;
+        should_wait = state->cached_state != AMP_STATE_PLAYING;
     }
 
-    if (notplay) {
-        if (task_state->wait_event_time <= 0) {
-            task_state->wait_event_time = MAX_WAIT_TIME_EVENT;
+    if (should_wait) {
+        if (state->event_wait_ticks <= 0) {
+            state->event_wait_ticks = AMP_I2S_WRITER_EVENT_WAIT_TICKS;
         }
-    } else if (task_state->wait_event_time > 0) {
-        task_state->wait_event_time = 0;
+    } else if (state->event_wait_ticks > 0) {
+        state->event_wait_ticks = 0;
     }
-    return notplay;
+    return should_wait;
 }
 
-static void i2s_writer_task(void *args) {
-    i2s_writer_handle_t writer = args;
+static void amp_i2s_writer_task(void *args) {
+    amp_i2s_writer_handle_t writer = args;
     ringbuf_handle_t rb = writer->rb_in;
     assert(rb);
 
     size_t read_buf_size = 1024;
     uint8_t *read_buf = amp_malloc(sizeof(uint8_t) * read_buf_size);
-    struct i2s_writer_task_state task_state = {
-        .state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
-        .task_stop = false,
-        .wait_eos_done = false,
-        .wait_event_time = MAX_WAIT_TIME_EVENT,
+    amp_i2s_writer_task_state_t task_state = {
+        .cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
+        .event_wait_ticks = AMP_I2S_WRITER_EVENT_WAIT_TICKS,
+        .stop_requested = false,
+        .waiting_eos_done = false,
     };
+
     while (true) {
-        if (i2s_writer_receive_event(writer, &task_state)) {
+        if (task_state.stop_requested) {
+            break;
+        }
+        if (amp_i2s_writer_process_notify(writer, &task_state)) {
             continue;
         }
-        /* read pcm data from ringbuf */
-        int data_size = rb_read(rb, (char *)read_buf, read_buf_size, MAX_WAIT_TIME_READ);
+        int data_size = rb_read(rb, (char *)read_buf, read_buf_size, AMP_I2S_WRITER_READ_WAIT_TICKS);
         if (RB_DONE == data_size) {
-            if (!task_state.wait_eos_done) {
-                ESP_LOGE(TAG, "input ringbuf is write done");
+            if (!task_state.waiting_eos_done) {
+                ESP_LOGI(TAG, "input ringbuf done");
                 AMP_EL_SEND_DONE(TAG, writer, el_entry);
-                task_state.wait_eos_done = true;
+                task_state.waiting_eos_done = true;
             }
             continue;
         } else if (RB_ABORT == data_size) {
-            ESP_LOGE(TAG, "input ringbuf is abort write");
+            ESP_LOGW(TAG, "input ringbuf aborted");
             continue;
         } else if (RB_TIMEOUT == data_size) {
-            ESP_LOGI(TAG, "read input ringbuf timeout");
+            ESP_LOGD(TAG, "read input ringbuf timeout");
             continue;
         } else if (data_size <= 0) {
-            ESP_LOGE(TAG, "read input ringbuf fail: %d", data_size);
+            ESP_LOGE(TAG, "read input ringbuf failed: %d", data_size);
             continue;
         } else {
-            ESP_LOGD(TAG, "read input ringbuf success, size: %d", data_size);
+            ESP_LOGD(TAG, "read from ringbuf: %d bytes", data_size);
         }
-        /* write data to i2s */
-        int retry = 0;
-        while (i2s_writer_send_pcm(writer, read_buf, data_size) != ESP_OK && retry < I2S_WRITE_RETRY_COUNT) {
-            retry++;
+
+        esp_err_t err = ESP_OK;
+        for (int retry = 0; retry < AMP_I2S_WRITER_WRITE_RETRY_COUNT; retry++) {
+            err = amp_i2s_writer_write_pcm(writer, read_buf, data_size);
+            if (ESP_OK == err) {
+                break;
+            }
+            ESP_LOGW(TAG, "I2S write failed (err=%d), retrying (%d/%d)", err, retry + 1, AMP_I2S_WRITER_WRITE_RETRY_COUNT);
+            if (err == ESP_ERR_INVALID_STATE) {
+                break;
+            }
         }
-        if (retry >= I2S_WRITE_RETRY_COUNT) {
-            ESP_LOGE(TAG, "write data to i2s fail, retry count: %d", retry);
+        if (ESP_OK != err) {
+            ESP_LOGE(TAG, "I2S write failed after %d retries (%s)", AMP_I2S_WRITER_WRITE_RETRY_COUNT, esp_err_to_name(err));
         } else {
-            ESP_LOGD(TAG, "write data to i2s channel success, size: %d", data_size);
+            ESP_LOGD(TAG, "wrote to I2S: %d bytes", data_size);
         }
     }
+
+    amp_free(read_buf);
+    vTaskDelete(NULL);
 }
 
-static void i2s_writer_set_input(void *args, ringbuf_handle_t rb) {
-    i2s_writer_handle_t writer = args;
+static void amp_i2s_writer_set_input(void *args, ringbuf_handle_t rb) {
+    amp_i2s_writer_handle_t writer = args;
     writer->rb_in = rb;
 }
 
-static void i2s_writer_report_event_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *event) {
-    i2s_writer_handle_t writer = args;
-    TaskHandle_t task_handle = writer->el_entry.task;
-    uint32_t notify = 0;
-    // TODO
-    switch (evt_id) {
-    default:
-        return;
-    }
-    BaseType_t ret = xTaskNotify(task_handle, notify, eSetValueWithOverwrite);
-    if (ret != pdTRUE)
-        ESP_LOGW(TAG, "send AMP_EVENT_ACTION_PAUSE notify fail: %d", ret);
-    else
-        ESP_LOGD(TAG, "send AMP_EVENT_ACTION_PAUSE notify success");
-}
+static void amp_i2s_writer_el_deinit(void *args) { amp_i2s_writer_deinit((amp_i2s_writer_handle_t)args); }
 
-static esp_err_t i2s_writer_setup_event(void *args, esp_event_loop_handle_t event_bus) {
-    i2s_writer_handle_t writer = args;
-    // register event report
-    esp_err_t err = esp_event_handler_instance_register_with(event_bus, AMP_EVENT_REPORT, ESP_EVENT_ANY_ID,
-                                                             i2s_writer_report_event_handler, writer, NULL);
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "register AMP_EVENT_ACTION fail: %s", esp_err_to_name(err));
-        return err;
-    }
-    ESP_LOGI(TAG, "register AMP_EVENT_ACTION success");
-    // err = esp_event_handler_instance_register(esp_event_base_t event_base, int32_t event_id, esp_event_handler_t
-    // event_handler, void *event_handler_arg, esp_evenft_handler_instance_t *instance)
-    return ESP_OK;
-}
-
-static void i2s_writer_el_deinit(void *args) { i2s_writer_deinit((i2s_writer_handle_t)args); }
-
-static const amp_element_interface_t i2s_amp_element_interface = {
-    .deinit = i2s_writer_el_deinit,
-    .task_run = i2s_writer_task,
-    .set_input_rb = i2s_writer_set_input,
+static const amp_element_interface_t amp_i2s_writer_element_interface = {
+    .deinit = amp_i2s_writer_el_deinit,
+    .run_task = amp_i2s_writer_task,
+    .set_input_rb = amp_i2s_writer_set_input,
     .set_output_rb = NULL,
-    .setup_event_handler = i2s_writer_setup_event,
+    .register_events = NULL,
 };
 
-// #####################################################################
-// ####################### i2s_writer public ###########################
-// #####################################################################
-
-esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t *writer) {
-    i2s_writer_handle_t w = amp_calloc(1, sizeof(struct i2s_writer));
+esp_err_t amp_i2s_writer_init(amp_i2s_writer_config_t *cfg, amp_i2s_writer_handle_t *writer) {
+    amp_i2s_writer_handle_t w = amp_calloc(1, sizeof(struct i2s_writer));
     if (!w) {
-        // no memory
         return ESP_ERR_NO_MEM;
     }
+    w->chan_enable = false;
+    w->tx_chan = NULL;
     w->i2s_port = cfg->i2s_port;
+    w->rb_in = NULL;
 
-    struct i2s_writer_output_args args = AUDIO_OUTPUT_DEFAULT_ARGS();
+    amp_i2s_writer_output_config_t args = AMP_I2S_WRITER_DEFAULT_OUTPUT_CONFIG();
     esp_err_t err = _i2s_driver_init(w, &args);
     if (ESP_OK != err) {
+        amp_free(w);
         return err;
     }
     *writer = w;
-    ESP_LOGD(TAG, "initialize i2s writer success");
+    ESP_LOGD(TAG, "initialized i2s writer");
     return ESP_OK;
 }
 
-void i2s_writer_deinit(i2s_writer_handle_t writer) {
+void amp_i2s_writer_deinit(amp_i2s_writer_handle_t writer) {
     if (!writer) {
         return;
     }
@@ -242,10 +224,10 @@ void i2s_writer_deinit(i2s_writer_handle_t writer) {
     amp_free(writer);
 }
 
-esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t writer, const uint8_t *data, size_t size) {
+esp_err_t amp_i2s_writer_write_pcm(amp_i2s_writer_handle_t writer, const uint8_t *data, size_t size) {
     size_t written = 0;
     if (writer->tx_chan == NULL || !writer->chan_enable) {
-        ESP_LOGE(TAG, "i2s channel not avaliable");
+        ESP_LOGE(TAG, "I2S channel not available");
         return ESP_ERR_INVALID_STATE;
     }
     esp_err_t err = ESP_OK;
@@ -261,17 +243,17 @@ esp_err_t i2s_writer_send_pcm(i2s_writer_handle_t writer, const uint8_t *data, s
         written += wc;
     }
     if (ESP_OK != err) {
-        ESP_LOGW(TAG, "write pcm data fail: %d(%s)", err, esp_err_to_name(err));
+        ESP_LOGW(TAG, "PCM write failed: %d(%s)", err, esp_err_to_name(err));
         return err;
     }
     if (written != size) {
-        ESP_LOGW(TAG, "write pcm not finished, written: %zu, total: %zu", written, size);
+        ESP_LOGW(TAG, "incomplete PCM write: %zu/%zu bytes", written, size);
         return ESP_ERR_NOT_FINISHED;
     }
     return ESP_OK;
 }
 
-esp_err_t i2s_writer_audio_config(i2s_writer_handle_t writer, struct i2s_writer_output_args *args) {
+esp_err_t amp_i2s_writer_set_output_config(amp_i2s_writer_handle_t writer, amp_i2s_writer_output_config_t *args) {
     i2s_chan_handle_t chan = writer->tx_chan;
     if (writer->chan_enable) {
         i2s_channel_disable(chan);
@@ -280,12 +262,21 @@ esp_err_t i2s_writer_audio_config(i2s_writer_handle_t writer, struct i2s_writer_
     if (args->sample_rate > 0) {
         i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(args->sample_rate);
         err = i2s_channel_reconfig_std_clock(chan, &clk_cfg);
+        if (ESP_OK != err) {
+            return err;
+        }
     }
-    if (args->slog_bit_width >= 0) {
-        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slog_bit_width, args->slot_mode);
+    if (args->slot_bit_width >= 0) {
+        i2s_std_slot_config_t slot_cfg =
+            I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slot_bit_width, args->slot_mode);
         err = i2s_channel_reconfig_std_slot(chan, &slot_cfg);
+        if (ESP_OK != err) {
+            return err;
+        }
     }
     return ESP_OK;
 }
 
-const amp_element_interface_t *i2s_writer_el_interface() { return &(i2s_amp_element_interface); }
+const amp_element_interface_t *amp_i2s_writer_get_element_interface(void) {
+    return &amp_i2s_writer_element_interface;
+}

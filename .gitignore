@@ -1,6 +1,7 @@
 .cache/
 .vscode/
 .idea/
+.opencode/
 *.o
 *.~
 build/

@@ -7,44 +7,45 @@
 #include "esp_err.h"
 
 void audio_test() {
-    i2s_writer_handle_t i2s_writer;
-    struct i2s_writer_cfg cfg = {
+    amp_i2s_writer_handle_t i2s_writer;
+    amp_i2s_writer_config_t cfg = {
         .i2s_port = I2S_NUM_0,
     };
-    esp_err_t err = i2s_writer_init(&cfg, &i2s_writer);
+    esp_err_t err = amp_i2s_writer_init(&cfg, &i2s_writer);
     ESP_ERROR_CHECK(err);
 
-    sin_pcm_reader_handle_t pcm_reader;
-    struct sin_pcm_reader_cfg pcm_cfg = {
+    amp_sine_pcm_reader_handle_t pcm_reader;
+    amp_sine_pcm_reader_config_t pcm_cfg = {
         .frames_size = 128,
         .max_amplitude = 3000,
     };
-    err = sin_pcm_reader_init(&pcm_cfg, &pcm_reader);
+    err = amp_sine_pcm_reader_init(&pcm_cfg, &pcm_reader);
     ESP_ERROR_CHECK(err);
 
-    struct sin_pcm_audio_args audio_args = {
-        .bit_width = PCM_BIT_WIDTH_16BIT,
-        .channel = PCM_CHANNEL_STEREO,
+    amp_sine_pcm_audio_config_t audio_args = {
+        .bit_width = AUDIO_BIT_WIDTH_16BIT,
+        .channel = AUDIO_CHANNEL_STEREO,
         .freq = 440,
         .sample_rate = 44100,
         .volume = 60,
     };
-    sin_pcm_config_audio(pcm_reader, &audio_args);
+    amp_sine_pcm_reader_set_audio_config(pcm_reader, &audio_args);
 
     amp_controller_handle_t controller;
     err = amp_controller_init(&controller);
     ESP_ERROR_CHECK(err);
 
-    struct amp_element_task_cfg el_cfg = {
+    amp_element_task_config_t el_cfg = {
         .name = "sin_pcm",
         .stack_size = 4096,
-        .rb_out_size = 1024,
+        .output_rb_size = 1024,
+        .intf = amp_sine_pcm_reader_get_element_interface(),
     };
 
-    amp_controller_append_reader(controller, (amp_element_handle_t )pcm_reader, sin_pcm_reader_el_interface(),
-                                 &el_cfg);
+    amp_controller_append_reader(controller, (amp_element_handle_t )pcm_reader, &el_cfg);
     el_cfg.name = "i2s_writer";
-    amp_controller_append_writer(controller, (amp_element_handle_t )i2s_writer, i2s_writer_el_interface(), &el_cfg);
+    el_cfg.intf = amp_i2s_writer_get_element_interface();
+    amp_controller_append_writer(controller, (amp_element_handle_t )i2s_writer, &el_cfg);
 
     amp_controller_run(controller);
 

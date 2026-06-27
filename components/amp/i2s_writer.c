@@ -2,6 +2,7 @@
 #include "amp/controller.h"
 #include "esp_log.h"
 
+#include "amp/amp_event.h"
 #include "amp/amp_mem.h"
 #include "amp/i2s_writer.h"
 #include "bsp.h"
@@ -70,7 +71,7 @@ static bool i2s_writer_do_event(i2s_writer_handle_t writer, TickType_t wait_time
         notify >>= 8;
         ESP_LOGI(TAG, "receive event notify: %d", notify);
     }
-    enum amp_state state = amp_dashboard_load_state(writer->el_entry.dashboard);
+    enum amp_state state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
     if (notify == 0) {
         // no event, check state
         return state == AMP_STATE_PLAYING;
@@ -99,7 +100,7 @@ static void i2s_writer_task(void *args) {
         // write data to i2s
         int data_size = rb_read(rb, (char *)read_buf, read_buf_size, max_wait);
         if (data_size == RB_DONE) {
-            amp_dashboard_send_done(writer->el_entry.dashboard);
+            // AMP_EL_SEND_DONE(TAG, writer, el_entry);
             continue;
         } else if (data_size < 0) {
             ESP_LOGW(TAG, "ringbuf is empty, no item is received");

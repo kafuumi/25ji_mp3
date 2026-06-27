@@ -5,6 +5,8 @@
 #include "element_priv.h"
 #include "esp_log.h"
 
+#define MAX_WAIT_TIME_EVENT pdMS_TO_TICKS(500)
+
 static const char *TAG = "devnull_writer";
 
 struct devnull_writer {
@@ -12,13 +14,39 @@ struct devnull_writer {
     ringbuf_handle_t rb_in;
 };
 
-static bool devnull_writer_do_event(devnull_writer_handle_t writer, TickType_t wait_time) {
+struct devnull_writer_task_state {
+    enum amp_state state;
+    TickType_t wait_event_time;
+    bool stop_task;
+    bool wait_eos_done;
+};
+
+static bool devnull_writer_receive_event(devnull_writer_handle_t writer, struct devnull_writer_task_state *task_state) {
     uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, wait_time) == pdTRUE) {
+    if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->wait_event_time) == pdTRUE) {
         ESP_LOGI(TAG, "receive event notify: %lu", notify);
+        if (notify & NOTIFY_VALUE_MASK_STATE) {
+            task_state->state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+        }
+        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
+            task_state->wait_eos_done = false;
+        }
     }
-    enum amp_state state = amp_dashboard_load_state(writer->el_entry.dashboard);
-    return state == AMP_STATE_PLAYING;
+    bool notplay;
+    if (task_state->wait_eos_done) {
+        notplay = true;
+    } else {
+        notplay = task_state->state != AMP_STATE_PLAYING;
+    }
+
+    if (notplay) {
+        if (task_state->wait_event_time <= 0) {
+            task_state->wait_event_time = MAX_WAIT_TIME_EVENT;
+        }
+    } else if (task_state->wait_event_time > 0) {
+        task_state->wait_event_time = 0;
+    }
+    return notplay;
 }
 
 static void devnull_writer_task(void *args) {
@@ -26,26 +54,48 @@ static void devnull_writer_task(void *args) {
     ringbuf_handle_t rb = writer->rb_in;
     assert(rb);
 
-    const TickType_t max_wait = pdMS_TO_TICKS(1000);
-    TickType_t notify_wait = 0;
+    struct devnull_writer_task_state task_state = {
+        .state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
+        .wait_event_time = MAX_WAIT_TIME_EVENT,
+        .stop_task = false,
+        .wait_eos_done = false,
+    };
+    TickType_t wait_read_time = pdMS_TO_TICKS(1000);
     const int read_size = 1024;
 
     while (true) {
-        if (!devnull_writer_do_event(writer, notify_wait)) {
-            notify_wait = pdMS_TO_TICKS(100);
+        if (task_state.stop_task) {
+            break;
+        }
+        if (devnull_writer_receive_event(writer, &task_state)) {
             continue;
         }
-        notify_wait = 0;
-
-        int consumed = rb_read(rb, NULL, read_size, max_wait);
-        if (consumed == RB_DONE) {
-            amp_dashboard_send_done(writer->el_entry.dashboard);
+        // mock
+        vTaskDelay(pdMS_TO_TICKS(10));
+        int consumed = rb_read(rb, NULL, read_size, wait_read_time);
+        if (RB_DONE == consumed) {
+            if (!task_state.wait_eos_done) {
+                ESP_LOGW(TAG, "input ringbuf is done write");
+                AMP_EL_SEND_DONE(TAG, writer, el_entry);
+                task_state.wait_eos_done = true;
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
             continue;
-        }
-        if (consumed < 0) {
-            ESP_LOGW(TAG, "ringbuf is empty, no item is received");
+        } else if (RB_ABORT == consumed) {
+            ESP_LOGW(TAG, "input ringbuf is abort read");
+            continue;
+        } else if (RB_TIMEOUT == consumed) {
+            ESP_LOGW(TAG, "read data from input ringbuf timeout");
+            continue;
+        } else if (consumed <= 0) {
+            ESP_LOGW(TAG, "read data from input ringbuf fail");
+            continue;
+        } else {
+            ESP_LOGD(TAG, "read input ringbuf success, size: %d", consumed);
         }
     }
+
+    vTaskDelete(NULL);
 }
 
 static void devnull_writer_set_input(void *args, ringbuf_handle_t rb) {

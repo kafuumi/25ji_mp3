@@ -13,19 +13,6 @@
 typedef struct amp_controller *amp_controller_handle_t;
 
 /**
- * @brief Internal event base used by elements to report status back to the controller
- */
-ESP_EVENT_DECLARE_BASE(AMP_EVENT_REPORT);
-
-/**
- * @brief Event IDs reported by internal amp elements
- */
-enum amp_event_report_id {
-    AMP_EVENT_REPORT_FATAL, /*!< Fatal error reported by an element */
-    AMP_EVENT_REPORT_WRITE_DONE,
-};
-
-/**
  * @brief Start all appended element tasks
  *
  * @param controller  Controller handle

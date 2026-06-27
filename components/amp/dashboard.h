@@ -18,26 +18,24 @@ extern "C" {
  * @brief Player state
  */
 enum amp_state {
-    AMP_STATE_INVALID,      /*!< Invalid / unknown state */
-    AMP_STATE_READY,        /*!< Initialized, not playing */
-    AMP_STATE_PLAYING,      /* playing music */
-    AMP_STATE_WAITING_NEXT, /* a music source strem is end, waiting all component process finished */
-    AMP_STATE_PAUSE,        /* pause state */
-    AMP_STATE_FATAL,        /* any error acour */
-};
-
-struct amp_audio_info {
-    const char *name;
-    int sample_rate;
-    enum amp_audio_media_type media_type;
-    enum amp_audio_channel channel;
-    enum amp_audio_bit_width bit_width;
+    AMP_STATE_INVALID, /*!< Invalid / unknown state */
+    AMP_STATE_READY,   /*!< Initialized, not playing */
+    AMP_STATE_PLAYING, /* playing music */
+    AMP_STATE_PAUSE,   /* pause state */
+    AMP_STATE_FATAL,   /* any error acour */
 };
 
 struct amp_dashboard {
     _Atomic enum amp_state state;
     SemaphoreHandle_t done_count;
-    volatile struct amp_audio_info audio;
+    /* media info */
+    struct {
+        volatile const char *name;
+        _Atomic int sample_rate;
+        _Atomic enum amp_audio_media_type media_type;
+        _Atomic enum amp_audio_channel channel;
+        _Atomic enum amp_audio_bit_width bit_width;
+    };
 };
 
 /**
@@ -69,7 +67,7 @@ void amp_dashboard_deinit(amp_dashboard_handle_t dashboard);
  * @param new_state  New state to set
  * @return Previous state before the swap
  */
-enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t dashboard, enum amp_state new_state);
+#define AMP_DASH_SWAP_STATE(dash, new_state) atomic_exchange(&(dash)->state, new_state)
 
 /**
  * @brief Atomically load the current state
@@ -77,7 +75,7 @@ enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t dashboard, enum 
  * @param dashboard  Dashboard handle
  * @return Current stored state
  */
-enum amp_state amp_dashboard_load_state(amp_dashboard_handle_t dashboard);
+#define AMP_DASH_LOAD_STATE(dash) atomic_load(&(dash)->state)
 
 /**
  * @brief Atomically check current state is AMP_STATE_PLAYING
@@ -85,9 +83,11 @@ enum amp_state amp_dashboard_load_state(amp_dashboard_handle_t dashboard);
  * @param dashboard  Dashboard handle
  * @return true when current state is AMP_STATE_PLAYING
  */
-bool amp_dashboard_is_playing(amp_dashboard_handle_t dashboard);
+#define AMP_DASH_IS_PLAYING(dash) AMP_DASH_LOAD_STATE(dash) == AMP_STATE_PLAYING
 
-void amp_dashboard_send_done(amp_dashboard_handle_t dashboard);
+#define AMP_DASH_LOAD_MEDIA_TYPE(dash) atomic_load(&(dash)->media_type)
+
+#define AMP_DASH_SET_MEDIA_TYPE(dash, type) atomic_store(&(dash)->media_type, type)
 
 #ifdef __cplusplus
 }

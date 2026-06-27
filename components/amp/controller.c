@@ -3,6 +3,7 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "amp/amp_event.h"
 #include "amp/amp_mem.h"
 #include "amp/controller.h"
 #include "amp/i2s_writer.h"
@@ -15,7 +16,7 @@
 
 #define CONTROLLER_ACTION_DO(controller, state, action, tag, log_fmt, ...)                                             \
     do {                                                                                                               \
-        enum amp_state old = amp_dashboard_swap_status((controller)->dashboard, state);                                \
+        enum amp_state old = AMP_DASH_SWAP_STATE((controller)->dashboard, state);                                      \
         if (old == state) {                                                                                            \
             ESP_LOGW(tag, log_fmt, ##__VA_ARGS__);                                                                     \
             return ESP_OK;                                                                                             \
@@ -111,31 +112,53 @@ static esp_err_t inline element_task_run(amp_element_handle_t el) {
 
 static void amp_controller_task_run(void *args) {
     amp_controller_handle_t controller = args;
-    amp_dashboard_handle_t dash = controller->dashboard;
-    enum amp_state state = amp_dashboard_load_state(dash);
-    if (state == AMP_STATE_WAITING_NEXT) {
-        int count = 0;
-        while (count < controller->el_size) {
-            if (xSemaphoreTake(dash->done_count, portMAX_DELAY) == pdTRUE) {
-                count++;
+    while (true) {
+        uint32_t notify;
+        if (xTaskNotifyWait(0, ULLONG_MAX, &notify, portMAX_DELAY) != pdTRUE) {
+            // sleep to wait
+            ESP_LOGI(TAG, "go to sleep, wait next notify");
+            continue;
+        }
+        if (notify & NOTIFY_VALUE_MASK_EOS) {
+            ESP_LOGI(TAG, "wakeup by EOS event");
+            int count = 0;
+            amp_dashboard_handle_t dash = controller->dashboard;
+            // wait all element done
+            while (count < controller->el_size) {
+                // TODO: handle timeout
+                if (xSemaphoreTake(dash->done_count, portMAX_DELAY) == pdTRUE) {
+                    count++;
+                    ESP_LOGI(TAG, "take done count, current: %d", count);
+                }
+            }
+            // reset ringbuf
+            // TODO: do next or pause
+            ESP_LOGI(TAG, "all element is done, reset");
+            rb_list_t *rb_list = &controller->rb_list;
+            for (int i = 0; i < rb_list->size; ++i) {
+                rb_reset_is_done_write(rb_list->items[i]);
+            }
+            /* send eos done to element */
+            amp_element_handle_t el;
+            STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+                xTaskNotify(el->task, NOTIFY_VALUE_MASK_EOS_DONE, eSetBits);
             }
         }
-        // reset ringbuf
-        rb_list_t *rb_list = &controller->rb_list;
-        for (int i = 0; i < rb_list->size; ++i) {
-            rb_reset_is_done_write(rb_list->items[i]);
-        }
-    } else {
-        vTaskSuspend(NULL);
     }
 }
 
 static void amp_controller_handle_report_event(void *args, esp_event_base_t base_evt, int32_t evt_id, void *evt) {
     amp_controller_handle_t controller = args;
-    TaskHandle_t task = controller->self;
-
-    // resume task to handle
-    vTaskResume(task);
+    uint32_t notify = 0;
+    switch (evt_id) {
+    case AMP_EVENT_REPORT_EOS:
+        notify = NOTIFY_VALUE_MASK_EOS;
+        break;
+    default:
+        ESP_LOGI(TAG, "report event %d not handle, ignore");
+        return;
+    }
+    xTaskNotify(controller->self, notify, eSetBits);
 }
 
 static inline esp_err_t amp_controller_append(amp_controller_handle_t controller, amp_element_handle_t el,
@@ -236,13 +259,35 @@ static inline esp_err_t amp_controller_setup_event(amp_controller_handle_t contr
 
 static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t controller,
                                                          enum amp_event_action_id evt) {
-    // send event
-    esp_err_t err = esp_event_post_to(controller->event_bus, AMP_EVENT_ACTION, evt, 0, 0, pdMS_TO_TICKS(3000));
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "send action event (%d) fail: %s", evt, esp_err_to_name(err));
-        return err;
+    // send event by task notify
+    uint32_t notify = NOTIFY_VALUE_MASK_STATE;
+    amp_element_handle_t el;
+    enum amp_state state;
+    switch (evt) {
+    case AMP_EVENT_ACTION_PAUSE:
+        state = AMP_STATE_PAUSE;
+        break;
+    case AMP_EVENT_ACTION_PLAY:
+        state = AMP_STATE_PLAYING;
+        break;
+    case AMP_EVENT_ACTION_RESET:
+        state = AMP_STATE_READY;
+        break;
+    case AMP_EVENT_ACTION_RESUME:
+        state = AMP_STATE_PLAYING;
+        break;
+    default:
+        return ESP_OK;
     }
-    ESP_LOGI(TAG, "send action event (%d) success");
+    AMP_DASH_SWAP_STATE(controller->dashboard, state);
+
+    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+        if (el && el->task) {
+            if (xTaskNotify(el->task, notify, eSetBits) != pdTRUE) {
+                ESP_LOGW(TAG, "send state change task notify to %s fail", el->name);
+            }
+        }
+    }
     return ESP_OK;
 }
 
@@ -341,8 +386,6 @@ esp_err_t amp_controller_run(amp_controller_handle_t controller) {
     if (xTaskCreate(amp_controller_task_run, "controller", 4096, controller, 1, &self) != pdTRUE) {
         return ESP_FAIL;
     }
-    // do not run
-    vTaskSuspend(self);
     controller->self = self;
     return ESP_OK;
 }
@@ -360,7 +403,7 @@ esp_err_t amp_controller_action_pause(amp_controller_handle_t controller) {
 }
 
 esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, bool *to_play) {
-    enum amp_state state = amp_dashboard_load_state(controller->dashboard);
+    enum amp_state state = AMP_DASH_LOAD_STATE(controller->dashboard);
     if (state == AMP_STATE_PAUSE || state == AMP_STATE_READY) {
         if (to_play)
             *to_play = true;

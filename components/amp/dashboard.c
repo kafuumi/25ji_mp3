@@ -23,30 +23,3 @@ void amp_dashboard_deinit(amp_dashboard_handle_t dashboard) {
     }
     amp_free(dashboard);
 }
-
-enum amp_state amp_dashboard_swap_status(amp_dashboard_handle_t dashboard, enum amp_state new_state) {
-    if (!dashboard) {
-        return AMP_STATE_INVALID;
-    }
-    return atomic_exchange(&dashboard->state, new_state);
-}
-
-enum amp_state amp_dashboard_load_state(amp_dashboard_handle_t dashboard) {
-    if (!dashboard) {
-        return AMP_STATE_INVALID;
-    }
-    return atomic_load(&dashboard->state);
-}
-
-bool amp_dashboard_is_playing(amp_dashboard_handle_t dashboard) {
-    if (!dashboard) {
-        return false;
-    }
-    return atomic_load(&dashboard->state) == AMP_STATE_PLAYING;
-}
-
-void amp_dashboard_send_done(amp_dashboard_handle_t dashboard) {
-    if (xSemaphoreGive(dashboard->done_count) != pdTRUE) {
-        ESP_LOGW(TAG, "give done count sem fail");
-    }
-}

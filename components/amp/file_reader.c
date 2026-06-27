@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "amp/amp_event.h"
 #include "amp/amp_mem.h"
 #include "amp/file_reader.h"
 #include "element_priv.h"
@@ -13,11 +14,20 @@
 
 #include "sds.h"
 
-#define EVENT_WAIT_TIME_MAX pdMS_TO_TICKS(100)
+#define MAX_WAIT_TIME_EVENT pdMS_TO_TICKS(100)
+#define MAX_WAIT_TIME_WRITE pdMS_TO_TICKS(3000)
+#define MAX_WAIT_TIME_POST_EVENT pdMS_TO_TICKS(1000)
 
 #define FILE_TYPE_NAME_MP3 ".mp3"
 #define FILE_TYPE_NAME_AAC ".aac"
 #define FILE_TYPE_NAME_FLAC ".flac"
+
+#define DO_WHAT_ON_FAIL(fail_counter)                                                                                  \
+    do {                                                                                                               \
+        ++fail_counter;                                                                                                \
+        if (fail_counter > 3) {                                                                                        \
+        }                                                                                                              \
+    } while (0)
 
 #define AUDIO_FILE_NODE_CREATE(var, err, type, on_fail)                                                                \
     do {                                                                                                               \
@@ -52,17 +62,81 @@ static void file_reader_set_output(void *args, ringbuf_handle_t rb) {
     reader->rb = rb;
 }
 
-static inline bool file_reader_do_event(file_reader_handle_t reader, TickType_t wait_time) {
-    uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, wait_time) == pdTRUE) {
+struct file_reader_task_state {
+    TickType_t wait_event_time;
+    int cur_fd;
+    const struct audio_file_source *cur_source;
+    enum amp_state state;
+    bool wait_next;
+    bool task_stop;
+};
+
+inline static bool send_eos_event(file_reader_handle_t reader) {
+    esp_err_t err = esp_event_post_to(reader->el_entry.event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_EOS, 0, 0,
+                                      MAX_WAIT_TIME_POST_EVENT);
+    ESP_LOGD(TAG, "post EOS event");
+    if (ESP_OK != err) {
+        ESP_LOGE(TAG, "post EOS event fail: %d(%s)", err, esp_err_to_name(err));
+        return false;
     }
-    return amp_dashboard_is_playing(reader->el_entry.dashboard);
+    AMP_EL_SEND_DONE(TAG, reader, el_entry);
+    return true;
 }
 
-static void _send_eos_event(file_reader_handle_t reader) {
-    amp_dashboard_handle_t dash = reader->el_entry.dashboard;
-    amp_dashboard_swap_status(dash, AMP_STATE_WAITING_NEXT);
-    amp_dashboard_send_done(dash);
+inline static bool file_reader_receive_event(file_reader_handle_t reader, struct file_reader_task_state *task_state) {
+    uint32_t notify = 0;
+    if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->wait_event_time) == pdTRUE) {
+        if (notify & NOTIFY_VALUE_MASK_STATE) {
+            task_state->state = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard);
+        }
+        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
+            task_state->wait_next = false;
+        }
+    }
+    bool notplay;
+    enum amp_state state = task_state->state;
+
+    if (task_state->wait_next) {
+        notplay = true;
+    } else {
+        notplay = state != AMP_STATE_PLAYING;
+    }
+    if (notplay) {
+        if (task_state->wait_event_time <= 0) {
+            task_state->wait_event_time = MAX_WAIT_TIME_EVENT;
+        }
+    } else if (task_state->wait_event_time > 0) {
+        task_state->wait_event_time = 0;
+    }
+    return notplay;
+}
+
+inline static bool file_reader_open_file(file_reader_handle_t reader, struct file_reader_task_state *task_state) {
+    const struct audio_file_source *src = file_reader_next(reader);
+    if (!src) {
+        ESP_LOGW(TAG, "no more file to read");
+        return false;
+    }
+    if (src->is_dir) {
+        ESP_LOGW(TAG, "current file %s is dir, skip", src->name);
+        return false;
+    }
+    const char *name = src->name;
+    int fd = open(name, O_RDONLY);
+    if (fd <= 0) {
+        ESP_LOGE(TAG, "open file %s fail: %d(%s)", name, errno, strerror(errno));
+        return false;
+    }
+    struct stat stat_file;
+    stat(src->name, &stat_file);
+    ESP_LOGI(TAG, "file %s st_mode: %d", src->name, stat_file.st_mode);
+    ESP_LOGI(TAG, "open file %s success, fd: %d, type: %d", name, fd, src->media_type);
+    AMP_DASH_SET_MEDIA_TYPE(reader->el_entry.dashboard, src->media_type);
+    task_state->cur_fd = fd;
+    task_state->cur_source = src;
+    esp_event_post_to(reader->el_entry.event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_MEDIA_TYPE, 0, 0,
+                      MAX_WAIT_TIME_POST_EVENT);
+    return true;
 }
 
 static void file_reader_task_run(void *args) {
@@ -72,60 +146,82 @@ static void file_reader_task_run(void *args) {
 
     size_t buf_size = 1024;
     uint8_t *buf = amp_malloc(sizeof(uint8_t) * buf_size);
-    TickType_t event_wait = EVENT_WAIT_TIME_MAX;
     TickType_t wait_time = pdMS_TO_TICKS(1000);
 
-    int fd = 0;
-    const struct audio_file_source *cur_file = NULL;
+    struct file_reader_task_state task_state = {
+        .cur_fd = 0,
+        .cur_source = NULL,
+        .wait_event_time = MAX_WAIT_TIME_EVENT,
+        .state = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard),
+        .wait_next = false,
+        .task_stop = false,
+    };
+    int fail_counter = 0;
+
     while (true) {
-        /* do event */
-        if (!file_reader_do_event(reader, event_wait)) {
-            event_wait = EVENT_WAIT_TIME_MAX;
+        /* receive event */
+        if (task_state.task_stop) {
+            goto _task_end;
+        }
+        if (file_reader_receive_event(reader, &task_state)) {
             continue;
-        } else if (event_wait > 0) {
-            event_wait = 0;
         }
         /* open file */
-        if (fd <= 0) {
-            cur_file = file_reader_next(reader);
-            if (cur_file == NULL || cur_file->is_dir) {
-                continue;
-            }
-            const char *name = cur_file->name;
-            fd = open(name, O_RDONLY);
-            if (fd < 0) {
-                ESP_LOGE(TAG, "open file %s fail: %d(%s)", name, errno, strerror(errno));
-                continue;
-            }
-            ESP_LOGI(TAG, "open file %s success, fd: %d", name, fd);
-            amp_dashboard_handle_t dash = reader->el_entry.dashboard;
-            dash->audio.name = name;
-            dash->audio.media_type = cur_file->media_type;
+        if (task_state.cur_fd <= 0 && !file_reader_open_file(reader, &task_state)) {
+            continue;
         }
         /* read data from file */
-        ssize_t read_size = read(fd, buf, buf_size);
+        ssize_t read_size = read(task_state.cur_fd, buf, buf_size);
         if (read_size < 0) {
             // read error
-            ESP_LOGE(TAG, "read file %s fail: %d(%s)", cur_file->name, errno, strerror(errno));
+            ESP_LOGE(TAG, "read file %s fail: %d(%s)", task_state.cur_source->name, errno, strerror(errno));
+            DO_WHAT_ON_FAIL(fail_counter);
+            goto _task_end;
             continue;
         } else if (read_size == 0) {
             // read finished
-            ESP_LOGI(TAG, "read file %s EOF", cur_file->name);
+            ESP_LOGI(TAG, "read file %s EOF", task_state.cur_source->name);
             rb_done_write(rb);
-            cur_file = NULL;
-            close(fd);
-            fd = 0;
-            _send_eos_event(reader);
+            task_state.wait_next = true;
+            task_state.cur_source = NULL;
+            close(task_state.cur_fd);
+            task_state.cur_fd = 0;
+            send_eos_event(reader);
             continue;
         }
-        ESP_LOGD(TAG, "read file %s success, size: %d", cur_file->name, read_size);
+        ESP_LOGD(TAG, "read file %s success, size: %d", task_state.cur_source->name, read_size);
         /* send data to ringbuf */
-        int write_size = rb_write(rb, (char *)buf, read_size, wait_time);
-        if (write_size < 0) {
+        int write_size;
+        int retry_count = 0;
+
+    _try_write:
+        write_size = rb_write(rb, (char *)buf, read_size, wait_time);
+        if (RB_DONE == write_size) {
+            /* unreachable */
+            ESP_LOGW(TAG, "output ringbuf is done write");
+        } else if (RB_ABORT == write_size) {
+            /* unreachable */
+            ESP_LOGW(TAG, "output ringbuf is abort write");
+        } else if (RB_TIMEOUT == write_size) {
+            if (retry_count < 3) {
+                ESP_LOGI(TAG, "write to ringbuf timeout, retry");
+                goto _try_write;
+            } else {
+                ESP_LOGW(TAG, "retry write to ringbuf timeout fail, try count: %d", retry_count);
+                continue;
+            }
+        } else if (write_size <= 0) {
             ESP_LOGE(TAG, "send data to ringbuf fail: %d", write_size);
-            continue;
+        } else {
+            ESP_LOGD(TAG, "send data to output ringbuf success, size: %d", write_size);
         }
     }
+
+_task_end:
+    if (buf) {
+        amp_free(buf);
+    }
+    vTaskDelete(NULL);
 }
 
 static void file_reader_el_deinit(void *args) { file_reader_deinit((file_reader_handle_t)args); }
@@ -195,7 +291,7 @@ esp_err_t file_reader_read_dir(file_reader_handle_t fl, const char *dir) {
             dir_count++;
         } else {
             // file
-            ESP_LOGD(TAG, "entry %s is file", full_path);
+            ESP_LOGD(TAG, "entry %s is file, mode: %d", full_path);
             const char *ext = strrchr(dir_entry->d_name, '.');
             if (ext) {
                 if (strcasecmp(ext, FILE_TYPE_NAME_MP3) == 0) {

@@ -5,11 +5,20 @@
 #include "amp/controller.h"
 #include "amp/devnull_writer.h"
 #include "amp/file_reader.h"
+#include "amp/i2s_writer.h"
+#include "bsp.h"
 
 TEST_CASE("Minimal Player", "[amp]") {
     devnull_writer_handle_t null_writer;
     esp_err_t err = devnull_writer_init(&null_writer);
     TEST_ASSERT_EQUAL(ESP_OK, err);
+    // bsp_init();
+    // bsp_audio_mute(false);
+    // i2s_writer_handle_t writer;
+    // struct i2s_writer_cfg i2s_cfg = {
+    //     .i2s_port = I2S_NUM_0,
+    // };
+    // esp_err_t err = i2s_writer_init(&i2s_cfg, &writer);
 
     audio_codec_handle_t codec;
     err = audio_codec_init(&codec);

@@ -53,8 +53,9 @@ static bool sin_pcm_reader_do_event(sin_pcm_reader_handle_t reader, TickType_t w
     if (xTaskNotifyWait(0, ULONG_MAX, &notify_count, wait_time)) {
         ESP_LOGI(TAG, "receive event notify: %d", notify_count);
     }
-    enum amp_state state = amp_dashboard_load_state(reader->el_entry.dashboard);
-    return state == AMP_STATE_PLAYING;
+    // enum amp_state state = AMP_EL_SEND_DONE(TAG, reader, el_entry);
+    // return state == AMP_STATE_PLAYING;
+    return true;
 }
 
 static void sin_pcm_reader_task(void *args) {

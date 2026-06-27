@@ -3,6 +3,7 @@
 #include "esp_audio_simple_dec_default.h"
 #include "esp_log.h"
 
+#include "amp/amp_event.h"
 #include "amp/amp_mem.h"
 #include "amp/audio_codec.h"
 #include "amp/ringbuf.h"
@@ -18,9 +19,6 @@
         if (counter) {                                                                                                 \
         }                                                                                                              \
     } while (0)
-
-#define NOTIFY_VALUE_MASK_STATE 0x01 << 0
-#define NOTIFY_VALUE_MASK_MEDIA 0x01 << 1
 
 static const char *TAG = "audio_codec";
 
@@ -38,11 +36,13 @@ struct audio_codec {
     enum amp_audio_media_type media_type;
 };
 
-inline static esp_err_t audio_codec_create_decoder(audio_codec_handle_t codec,
-                                                   const enum amp_audio_media_type media_type) {
-    esp_audio_simple_dec_type_t dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
+inline static bool setup_decoder(audio_codec_handle_t codec) {
+    esp_audio_simple_dec_type_t dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_NONE;
+    enum amp_audio_media_type media_type = AMP_DASH_LOAD_MEDIA_TYPE(codec->el_entry.dashboard);
     switch (media_type) {
     case AUDIO_MEDIA_TYPE_NONE:
+        ESP_LOGW(TAG, "audio media type is none");
+        return false;
     case AUDIO_MEDIA_TYPE_MP3:
         dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_MP3;
         break;
@@ -58,12 +58,24 @@ inline static esp_err_t audio_codec_create_decoder(audio_codec_handle_t codec,
         .dec_type = dec_type,
         .use_frame_dec = false,
     };
+    esp_err_t err;
+    if (media_type == codec->media_type && codec->decoder && codec->decode_opened) {
+        // reset
+        err = esp_audio_simple_dec_reset(codec->decoder);
+        if (ESP_OK != err) {
+            ESP_LOGE(TAG, "reset simple decoder fail: %d(%s)", err, esp_err_to_name(err));
+            return false;
+        }
+        return true;
+    }
+    // open new decoder
     esp_audio_simple_dec_handle_t decoder;
-    esp_err_t err = esp_audio_simple_dec_open(&dec_cfg, &decoder);
+    err = esp_audio_simple_dec_open(&dec_cfg, &decoder);
     if (ESP_OK != err) {
         ESP_LOGE(TAG, "open simple decoder fail: %s", esp_err_to_name(err));
-        return err;
+        return false;
     }
+    codec->media_type = media_type;
     if (codec->decoder && codec->decode_opened) {
         ESP_LOGD(TAG, "close simple decoder");
         esp_audio_simple_dec_close(codec->decoder);
@@ -71,46 +83,43 @@ inline static esp_err_t audio_codec_create_decoder(audio_codec_handle_t codec,
     codec->decoder = decoder;
     codec->decode_opened = true;
     ESP_LOGI(TAG, "open simple decoder success, dec_type: %d", dec_type);
-    return ESP_OK;
-}
-
-inline static bool setup_decoder(audio_codec_handle_t codec) {
-    enum amp_audio_media_type media_type = codec->el_entry.dashboard->audio.media_type;
-    if (media_type != codec->media_type) {
-        codec->media_type = media_type;
-    } else if (codec->decoder && codec->decode_opened) {
-        return ESP_OK;
-    }
-    esp_err_t err = audio_codec_create_decoder(codec, media_type);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "create audio codec fail: %d(%s)", err, esp_err_to_name(err));
-        return false;
-    }
     return true;
 }
 
 struct audio_codec_task_state {
-    bool is_first_dec;    // this stream is first to decode
     enum amp_state state; // cached state
     TickType_t wait_time; // wait task notify or event
     bool stop_task;
+    bool new_stream;
+    bool unknown_media;
 };
 
 static bool audio_codec_receive_event(audio_codec_handle_t codec, struct audio_codec_task_state *task_state) {
     uint32_t notify = 0;
-    bool no_media_type_notify = true;
     if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->wait_time) == pdTRUE) {
+        if (notify & NOTIFY_VALUE_MASK_STATE) {
+            task_state->state = AMP_DASH_LOAD_STATE(codec->el_entry.dashboard);
+        }
+        if (notify & NOTIFY_VALUE_MASK_MEDIA_TYPE) {
+            task_state->new_stream = true;
+            task_state->unknown_media = false;
+        }
+        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
+            task_state->new_stream = true;
+        }
     }
     bool notplay;
-    if (task_state->is_first_dec && no_media_type_notify) {
+    if (task_state->unknown_media) {
         notplay = true;
     } else {
-        notplay = task_state->state == AMP_STATE_PLAYING;
+        notplay = task_state->state != AMP_STATE_PLAYING;
     }
 
     if (notplay) {
-        task_state->wait_time = MAX_WAIT_TIME_TASK_NOTIFY;
-    } else {
+        if (task_state->wait_time <= 0) {
+            task_state->wait_time = MAX_WAIT_TIME_TASK_NOTIFY;
+        }
+    } else if (task_state->wait_time > 0) {
         task_state->wait_time = 0;
     }
     return notplay;
@@ -138,29 +147,43 @@ static void audio_codec_task_run(void *args) {
     esp_audio_simple_dec_out_t out_dec = {0};
     out_dec.buffer = out_buf;
     out_dec.len = out_buf_size;
+    codec->media_type = AUDIO_MEDIA_TYPE_NONE;
 
     esp_err_t err;
     int fail_counter = 0;
     struct audio_codec_task_state task_state = {
-        .state = amp_dashboard_load_state(codec->el_entry.dashboard),
-        .is_first_dec = true,
+        .state = AMP_DASH_LOAD_STATE(codec->el_entry.dashboard),
+        .unknown_media = true,
+        .new_stream = false,
         .wait_time = MAX_WAIT_TIME_TASK_NOTIFY,
     };
 
 _read_loop:
     while (true) {
+        if (task_state.stop_task) {
+            goto _task_end;
+        }
         /* check task notify and handle event */
         if (audio_codec_receive_event(codec, &task_state)) {
             continue;
         }
-        if (task_state.stop_task) {
-            goto _task_end;
+
+        /* open esp audio codec */
+        if (task_state.new_stream || !codec->decode_opened) {
+            if (setup_decoder(codec)) {
+                dec = codec->decoder;
+                task_state.new_stream = false;
+
+            } else {
+                continue;
+            }
         }
         /* read data from input ringbuf */
         int in_size = rb_read(rb_in, (char *)in_buf, in_buf_size, MAX_WAIT_TIME_READ_RINGBUF);
         bool is_done = false;
         if (RB_DONE == in_size) {
             is_done = true;
+            task_state.unknown_media = true;
             ESP_LOGW(TAG, "input ringbuf is done");
             if (raw_dec.eos) {
                 // already handle is_done, continue
@@ -169,6 +192,7 @@ _read_loop:
         } else if (RB_ABORT == in_size) {
             ESP_LOGW(TAG, "input ringbuf is abort");
             // abort data
+            task_state.unknown_media = true;
             continue;
         } else if (RB_TIMEOUT == in_size) {
             ESP_LOGW(TAG, "read input ringbuf timeout");
@@ -180,15 +204,7 @@ _read_loop:
         } else {
             ESP_LOGD(TAG, "read input ringbuf success, size: %d", in_size);
         }
-        /* open esp audio codec */
-        if (task_state.is_first_dec || !codec->decode_opened) {
-            if (setup_decoder(codec)) {
-                dec = codec->decoder;
-                task_state.is_first_dec = false;
-            } else {
-                continue;
-            }
-        }
+
         /* reset input and output */
         raw_dec.buffer = in_buf;
         raw_dec.len = is_done ? 0 : in_size;
@@ -260,7 +276,7 @@ _read_loop:
             if (raw_dec.eos) {
                 /* end of stream, set done flag */
                 rb_done_write(rb_out);
-                task_state.is_first_dec = true;
+                AMP_EL_SEND_DONE(TAG, codec, el_entry);
                 goto _read_loop;
             }
         }
@@ -286,12 +302,29 @@ static void audio_codec_set_output(void *args, ringbuf_handle_t rb_out) {
 
 static void audio_codec_el_deinit(void *args) { return audio_codec_deinit((audio_codec_handle_t)args); }
 
+static void audio_codec_report_evt_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *evt_data) {
+    audio_codec_handle_t codec = args;
+    TaskHandle_t task = codec->el_entry.task;
+    ESP_LOGI(TAG, "receive event: %d", evt_id);
+    switch (evt_id) {
+    case AMP_EVENT_REPORT_MEDIA_TYPE:
+        xTaskNotify(task, NOTIFY_VALUE_MASK_MEDIA_TYPE, eSetBits);
+        break;
+    }
+}
+
+static esp_err_t audio_codec_setup_event(void *args, esp_event_loop_handle_t event_bus) {
+    esp_err_t err = esp_event_handler_instance_register_with(event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_MEDIA_TYPE,
+                                                             audio_codec_report_evt_handler, args, NULL);
+    return err;
+}
+
 static const amp_element_interface_t audio_codec_element_interface = {
     .deinit = audio_codec_el_deinit,
     .set_input_rb = audio_codec_set_input,
     .set_output_rb = audio_codec_set_output,
     .task_run = audio_codec_task_run,
-    .setup_event_handler = NULL,
+    .setup_event_handler = audio_codec_setup_event,
 };
 
 const amp_element_interface_t *audio_codec_el_interface() { return &audio_codec_element_interface; }

@@ -8,15 +8,11 @@
 #include "amp/element.h"
 #include "dashboard.h"
 
-// 外部操作事件
-ESP_EVENT_DECLARE_BASE(AMP_EVENT_ACTION);
-
-enum amp_event_action_id {
-    AMP_EVENT_ACTION_PLAY = 1,   // Ready => Playing
-    AMP_EVENT_ACTION_PAUSE = 2,  // Playing => Paused
-    AMP_EVENT_ACTION_RESUME = 3, // Paused => Playing
-    AMP_EVENT_ACTION_RESET = 4,  // any => Ready
-};
+#define NOTIFY_VALUE_MASK_STATE 1 << 0
+#define NOTIFY_VALUE_MASK_MEDIA_TYPE 1 << 1
+#define NOTIFY_VALUE_MASK_MEDIA_DETAIL 1 << 2
+#define NOTIFY_VALUE_MASK_EOS 1 << 3
+#define NOTIFY_VALUE_MASK_EOS_DONE 1 << 4
 
 // audio output arguments changed
 struct amp_event_report_audio_args {
@@ -35,5 +31,12 @@ struct amp_element {
     esp_event_handler_t event_bus;
     amp_dashboard_handle_t dashboard;
 };
+
+#define AMP_EL_SEND_DONE(TAG, el, field)                                                                               \
+    do {                                                                                                               \
+        if (xSemaphoreGive((el)->field.dashboard->done_count) != pdTRUE) {                                             \
+            ESP_LOGE(TAG, "give done count sema fail");                                                                \
+        }                                                                                                              \
+    } while (0)
 
 #endif // _AMP_ELEMENT_PRIV_H_

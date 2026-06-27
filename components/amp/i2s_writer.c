@@ -9,6 +9,11 @@
 #include "element_priv.h"
 #include "utils/esp_utils.h"
 
+#define MAX_WAIT_TIME_EVENT pdMS_TO_TICKS(100)
+#define MAX_WAIT_TIME_READ pdMS_TO_TICKS(1000)
+
+#define I2S_WRITE_RETRY_COUNT 3
+
 static const char *TAG = "i2s_writer";
 
 struct i2s_writer {
@@ -62,52 +67,89 @@ cleanup:
     return err;
 }
 
-static bool i2s_writer_do_event(i2s_writer_handle_t writer, TickType_t wait_time) {
+struct i2s_writer_task_state {
+    enum amp_state state;
+    bool wait_eos_done;
+    bool task_stop;
+    TickType_t wait_event_time;
+};
+
+inline static bool i2s_writer_receive_event(i2s_writer_handle_t writer, struct i2s_writer_task_state *task_state) {
     uint32_t notify = 0;
-    // xxxx-xxxx xxxx-xxxx xxxx-xxxx xxxx-xxxx
-    // undefined undefined   REPORT   ACTION
-    // ignore ACTION event
-    if (xTaskNotifyWait(0xff, ULONG_MAX, &notify, wait_time)) {
-        notify >>= 8;
-        ESP_LOGI(TAG, "receive event notify: %d", notify);
+    if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->wait_event_time) == pdTRUE) {
+        ESP_LOGI(TAG, "receive event notify: %lu", notify);
+        if (notify & NOTIFY_VALUE_MASK_STATE) {
+            task_state->state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+        }
+        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
+            task_state->wait_eos_done = false;
+        }
     }
-    enum amp_state state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
-    if (notify == 0) {
-        // no event, check state
-        return state == AMP_STATE_PLAYING;
+    bool notplay;
+    if (task_state->wait_eos_done) {
+        notplay = true;
+    } else {
+        notplay = task_state->state != AMP_STATE_PLAYING;
     }
-    // todo: handle REPORT event
-    return state == AMP_STATE_PLAYING;
+
+    if (notplay) {
+        if (task_state->wait_event_time <= 0) {
+            task_state->wait_event_time = MAX_WAIT_TIME_EVENT;
+        }
+    } else if (task_state->wait_event_time > 0) {
+        task_state->wait_event_time = 0;
+    }
+    return notplay;
 }
 
 static void i2s_writer_task(void *args) {
     i2s_writer_handle_t writer = args;
     ringbuf_handle_t rb = writer->rb_in;
     assert(rb);
-    const TickType_t max_wait = pdMS_TO_TICKS(1000);
-
-    TickType_t notify_wait = 0;
 
     size_t read_buf_size = 1024;
     uint8_t *read_buf = amp_malloc(sizeof(uint8_t) * read_buf_size);
+    struct i2s_writer_task_state task_state = {
+        .state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
+        .task_stop = false,
+        .wait_eos_done = false,
+        .wait_event_time = MAX_WAIT_TIME_EVENT,
+    };
     while (true) {
-        if (!i2s_writer_do_event(writer, notify_wait)) {
-            // wait notify
-            notify_wait = pdMS_TO_TICKS(100);
+        if (i2s_writer_receive_event(writer, &task_state)) {
             continue;
         }
-        notify_wait = 0;
-        // write data to i2s
-        int data_size = rb_read(rb, (char *)read_buf, read_buf_size, max_wait);
-        if (data_size == RB_DONE) {
-            // AMP_EL_SEND_DONE(TAG, writer, el_entry);
+        /* read pcm data from ringbuf */
+        int data_size = rb_read(rb, (char *)read_buf, read_buf_size, MAX_WAIT_TIME_READ);
+        if (RB_DONE == data_size) {
+            if (!task_state.wait_eos_done) {
+                ESP_LOGE(TAG, "input ringbuf is write done");
+                AMP_EL_SEND_DONE(TAG, writer, el_entry);
+                task_state.wait_eos_done = true;
+            }
             continue;
-        } else if (data_size < 0) {
-            ESP_LOGW(TAG, "ringbuf is empty, no item is received");
+        } else if (RB_ABORT == data_size) {
+            ESP_LOGE(TAG, "input ringbuf is abort write");
             continue;
+        } else if (RB_TIMEOUT == data_size) {
+            ESP_LOGI(TAG, "read input ringbuf timeout");
+            continue;
+        } else if (data_size <= 0) {
+            ESP_LOGE(TAG, "read input ringbuf fail: %d", data_size);
+            continue;
+        } else {
+            ESP_LOGD(TAG, "read input ringbuf success, size: %d", data_size);
         }
-        // write to i2s
-        i2s_writer_send_pcm(writer, read_buf, data_size);
+        /* write data to i2s */
+        int retry = 0;
+        while (i2s_writer_send_pcm(writer, read_buf, data_size) != ESP_OK && retry < I2S_WRITE_RETRY_COUNT) {
+            retry++;
+        }
+        if (retry >= I2S_WRITE_RETRY_COUNT) {
+            ESP_LOGE(TAG, "write data to i2s fail, retry count: %d", retry);
+        } else {
+            ESP_LOGD(TAG, "write data to i2s channel success, size: %d", data_size);
+        }
     }
 }
 
@@ -167,10 +209,7 @@ esp_err_t i2s_writer_init(struct i2s_writer_cfg *cfg, i2s_writer_handle_t *write
         // no memory
         return ESP_ERR_NO_MEM;
     }
-    w->chan_enable = false;
-    w->tx_chan = NULL;
     w->i2s_port = cfg->i2s_port;
-    w->rb_in = NULL;
 
     struct i2s_writer_output_args args = AUDIO_OUTPUT_DEFAULT_ARGS();
     esp_err_t err = _i2s_driver_init(w, &args);

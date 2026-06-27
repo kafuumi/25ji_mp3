@@ -9,16 +9,16 @@
 #include "bsp.h"
 
 TEST_CASE("Minimal Player", "[amp]") {
-    devnull_writer_handle_t null_writer;
-    esp_err_t err = devnull_writer_init(&null_writer);
-    TEST_ASSERT_EQUAL(ESP_OK, err);
-    // bsp_init();
-    // bsp_audio_mute(false);
-    // i2s_writer_handle_t writer;
-    // struct i2s_writer_cfg i2s_cfg = {
-    //     .i2s_port = I2S_NUM_0,
-    // };
-    // esp_err_t err = i2s_writer_init(&i2s_cfg, &writer);
+    // devnull_writer_handle_t null_writer;
+    // esp_err_t err = devnull_writer_init(&null_writer);
+    // TEST_ASSERT_EQUAL(ESP_OK, err);
+    bsp_init();
+    bsp_audio_mute(false);
+    i2s_writer_handle_t writer;
+    struct i2s_writer_cfg i2s_cfg = {
+        .i2s_port = I2S_NUM_0,
+    };
+    esp_err_t err = i2s_writer_init(&i2s_cfg, &writer);
 
     audio_codec_handle_t codec;
     err = audio_codec_init(&codec);
@@ -42,8 +42,7 @@ TEST_CASE("Minimal Player", "[amp]") {
     task_cfg.name = "audio_codec";
     amp_controller_append_processor(controller, (amp_element_handle_t)codec, audio_codec_el_interface(), &task_cfg);
     task_cfg.name = "null_writer";
-    amp_controller_append_writer(controller, (amp_element_handle_t)null_writer, devnull_writer_el_interface(),
-                                 &task_cfg);
+    amp_controller_append_writer(controller, (amp_element_handle_t)writer, i2s_writer_el_interface(), &task_cfg);
 
     amp_controller_run(controller);
     amp_controller_action_play(controller);

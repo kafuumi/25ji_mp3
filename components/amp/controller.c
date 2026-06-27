@@ -292,7 +292,7 @@ static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t
 }
 
 esp_err_t amp_controller_init(amp_controller_handle_t *controller) {
-    amp_controller_handle_t c = amp_malloc(sizeof(struct amp_controller));
+    amp_controller_handle_t c = amp_calloc(1, sizeof(struct amp_controller));
     STAILQ_INIT(&(c->el_list));
     rb_list_init(&(c->rb_list));
     esp_err_t err = amp_controller_setup_event(c);

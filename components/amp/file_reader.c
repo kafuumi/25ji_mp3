@@ -325,12 +325,10 @@ esp_err_t file_reader_read_dir(file_reader_handle_t fl, const char *dir) {
 }
 
 esp_err_t file_reader_init(file_reader_handle_t *fr) {
-    file_reader_handle_t f = amp_malloc(sizeof(struct file_reader));
-    if (!f)
+    file_reader_handle_t f = amp_calloc(1, sizeof(struct file_reader));
+    if (!f) {
         return ESP_ERR_NO_MEM;
-
-    f->size = 0;
-    f->base = NULL;
+    }
     TAILQ_INIT(&f->file_list);
     *fr = f;
     return ESP_OK;

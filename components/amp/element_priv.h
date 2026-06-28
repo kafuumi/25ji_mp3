@@ -14,11 +14,6 @@
 #define NOTIFY_VALUE_MASK_EOS 1 << 3
 #define NOTIFY_VALUE_MASK_EOS_DONE 1 << 4
 
-// audio output arguments changed
-struct amp_event_report_audio_args {
-    int sample_rate;
-};
-
 struct amp_element {
     STAILQ_ENTRY(amp_element) stailq_entry;
 

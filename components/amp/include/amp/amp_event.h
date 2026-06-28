@@ -2,6 +2,7 @@
 #define _AMP_EVENT_H_
 
 #include "esp_event.h"
+
 /**
  * @brief Internal event base used by elements to report status back to the controller
  */

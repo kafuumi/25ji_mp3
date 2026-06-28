@@ -158,11 +158,13 @@ static void amp_controller_handle_report_event(void *args, esp_event_base_t base
         ESP_LOGI(TAG, "unhandled report event %d, ignoring");
         return;
     }
-    xTaskNotify(controller->self, notify, eSetBits);
+    if (notify > 0) {
+        xTaskNotify(controller->self, notify, eSetBits);
+    }
 }
 
 static inline esp_err_t amp_controller_append(amp_controller_handle_t controller, amp_element_handle_t el,
-                                               const amp_element_task_config_t *cfg) {
+                                              const amp_element_task_config_t *cfg) {
     const amp_element_interface_t *intf = cfg->intf;
     assert(el && intf);
     // setup

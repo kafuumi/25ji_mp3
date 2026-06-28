@@ -89,6 +89,25 @@
 - [ ] 文件偏移与 PCM 时间的映射关系
 - [ ] seek 时 ringbuf 清空策略：`rb_reset` 还是 `rb_reset_is_done_write` + 等 consumer 消费完
 
+### 音量控制
+- [ ] `dashboard.h` — 新增 `_Atomic int volume` 字段（0–100），`AMP_DASH_LOAD_VOLUME` / `AMP_DASH_SET_VOLUME` 宏
+- [ ] `element_priv.h` — 新增 `#define NOTIFY_VALUE_MASK_VOLUME 1 << 5`
+- [ ] `amp_event.h` — 新增 `AMP_EVENT_ACTION_SET_VOLUME = 5`
+- [ ] `controller.h` — 声明 `amp_controller_action_set_volume(controller, int volume)`
+- [ ] `controller.c` — 实现：校验范围 0–100 → `AMP_DASH_SET_VOLUME` → 广播 `NOTIFY_VALUE_MASK_VOLUME` 给所有 element
+- [ ] `i2s_writer.c` — `process_notify` 处理 `VOLUME` 位，更新 `cached_volume`；`write_pcm` 使用 Q16 定点数应用音量（`(sample * volume_q16) >> 16`，热路径无浮点/除法）
+- [ ] `sin_pcm_reader.c` — `process_notify` 处理 `VOLUME` 位，从 dashboard 读音量替代 `args.volume`
+
+### 音量计算方案对比
+- [x] Q16 定点数 `(sample * factor) >> 16` — 每样本 1 乘 1 移位，已采纳
+- [x] 浮点 `sample * (vol / 100.0)` — 当前 sin_pcm_reader 中的实现，每样本 1 浮点乘 + float→int 转换，较慢
+- [ ] 2^n 范围查表 — 256 级音量只需 `vol > 7` 右移，免乘但精度粗糙
+- [ ] 对数刻度 — 人耳感知对数，vol=50 时衰减远大于 50%，需查表将线性 0–100 映射到 dB 衰减
+
+### 音量控制后续优化（可选）
+- [ ] 对数刻度映射：`factor = pow10((vol - 100) * (dB_range) / 100 / 20)`，启动时预计算 0–100 的 Q16 表
+- [ ] 软淡入淡出：音量变化时逐帧线性过渡而非跳变，避免爆音
+
 ---
 
 ## P3 — 音频参数联动

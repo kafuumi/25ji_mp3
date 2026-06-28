@@ -7,6 +7,14 @@
 #include "amp/file_reader.h"
 #include "amp/i2s_writer.h"
 #include "bsp.h"
+#include "esp_log.h"
+
+static const char *TAG = "minimal_player";
+
+static void print_heap(const char *tag) {
+    ESP_LOGW(tag, "free=%u min_free=%u largest=%u", heap_caps_get_free_size(MALLOC_CAP_8BIT),
+             heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT), heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+}
 
 TEST_CASE("Minimal Player", "[amp]") {
     // amp_devnull_writer_handle_t null_writer;
@@ -49,6 +57,8 @@ TEST_CASE("Minimal Player", "[amp]") {
 
     amp_controller_run(controller);
     amp_controller_action_play(controller);
-    while (true)
+    while (true) {
+        print_heap(TAG);
         vTaskDelay(pdMS_TO_TICKS(10 * 1000));
+    }
 }

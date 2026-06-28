@@ -25,17 +25,27 @@ enum amp_state {
     AMP_STATE_FATAL,   /* any error acour */
 };
 
+/**
+ * @brief Snapshot of audio output parameters, read in one call
+ */
+struct amp_audio_detail {
+    int sample_rate;
+    enum amp_audio_channel channel;
+    enum amp_audio_bit_width bit_width;
+    int bitrate;
+};
+
 struct amp_dashboard {
     _Atomic enum amp_state state;
     SemaphoreHandle_t done_count;
     /* media info */
     struct {
         volatile const char *name;
-        _Atomic int sample_rate;
-        _Atomic enum amp_audio_media_type media_type;
-        _Atomic enum amp_audio_channel channel;
-        _Atomic enum amp_audio_bit_width bit_width;
+        enum amp_audio_media_type media_type;
     };
+    /* media detail */
+    SemaphoreHandle_t media_sem;
+    struct amp_audio_detail media_detail;
 };
 
 /**
@@ -59,6 +69,12 @@ esp_err_t amp_dashboard_init(amp_dashboard_handle_t *dashboard);
  * @param dashboard  Dashboard handle created by amp_dashboard_init
  */
 void amp_dashboard_deinit(amp_dashboard_handle_t dashboard);
+
+esp_err_t amp_dashboard_load_audio_detail(amp_dashboard_handle_t dashboard, struct amp_audio_detail *detail,
+                                          TickType_t timeout);
+
+esp_err_t amp_dashboard_swap_audio_detail(amp_dashboard_handle_t dashboard, struct amp_audio_detail *detail,
+                                          TickType_t timeout);
 
 /**
  * @brief Atomically swap the current state with a new state

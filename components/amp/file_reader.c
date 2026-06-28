@@ -129,6 +129,7 @@ static bool amp_file_reader_open_file(amp_file_reader_handle_t reader, amp_file_
 
     esp_err_t err = esp_event_post_to(reader->el_entry.event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_AUDIO_FORMAT, 0, 0,
                                       AMP_FILE_READER_POST_WAIT_TICKS);
+    ESP_LOGI(TAG, "open new stream, post AUDIO FORMAT event");
     if (ESP_OK != err) {
         ESP_LOGW(TAG, "failed to post audio format event: %d(%s)", err, esp_err_to_name(err));
     }

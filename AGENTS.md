@@ -1,9 +1,34 @@
 # AGENTS.md
 
+<!-- codebase-memory-mcp:start -->
+## Codebase Knowledge Graph (codebase-memory-mcp)
+
+This project uses codebase-memory-mcp to maintain a knowledge graph of the codebase.
+ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
+
+### Priority Order
+1. `search_graph` — find functions, classes, routes, variables by pattern
+2. `trace_path` — trace who calls a function or what it calls
+3. `get_code_snippet` — read specific function/class source code
+4. `query_graph` — run Cypher queries for complex patterns
+5. `get_architecture` — high-level project summary
+
+### When to fall back to grep/glob
+- Searching for string literals, error messages, config values
+- Searching non-code files (Dockerfiles, shell scripts, configs)
+- When MCP tools return insufficient results
+
+### Examples
+- Find a function: `search_graph(name_pattern=".*audio_test.*")`
+- Who calls it: `trace_path(function_name="audio_test", direction="inbound")`
+- Read source: `get_code_snippet(qualified_name="main/src/player.audio_test")`
+<!-- codebase-memory-mcp:end -->
+
 ## Workflow
 - This is an ESP-IDF firmware project. Source the ESP-IDF environment first, then run `idf.py` from the repo root.
 - Primary verification for the main firmware is `idf.py build`.
 - Change Kconfig settings through `idf.py menuconfig`; `sdkconfig` is generated and `.gitignore` excludes `sdkconfig.*`.
+- **NEVER modify files directly unless the user explicitly asks you to.** When proposing changes, describe them first and wait for confirmation before editing.
 - **NEVER commit or `git commit` unless the user explicitly asks you to.** Do not stage (`git add`) or commit code on your own initiative.
 
 ## Project Shape

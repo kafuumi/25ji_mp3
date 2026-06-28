@@ -12,6 +12,7 @@
 #define AMP_AUDIO_DECODER_EVENT_WAIT_TICKS pdMS_TO_TICKS(100)
 #define AMP_AUDIO_DECODER_READ_WAIT_TICKS pdMS_TO_TICKS(500)
 #define AMP_AUDIO_DECODER_WRITE_WAIT_TICKS pdMS_TO_TICKS(3000)
+#define AMP_AUDIO_DECODER_POST_EVENT_WAIT_TICKS pdMS_TO_TICKS(1000)
 
 static const char *TAG = "audio_codec";
 
@@ -74,15 +75,52 @@ static bool amp_audio_decoder_setup(amp_audio_decoder_handle_t codec) {
     return true;
 }
 
+static bool amp_audio_decoder_get_media_info(amp_audio_decoder_handle_t decoder) {
+    esp_audio_simple_dec_info_t media_info;
+    esp_err_t err = esp_audio_simple_dec_get_info(decoder->decoder, &media_info);
+    if (ESP_OK != err) {
+        ESP_LOGE(TAG, "get media info fail: %d(%s)", err, esp_err_to_name(err));
+        return false;
+    }
+    ESP_LOGI(TAG, "media sample rate: %d hz channel: %d, %d bit %d kbps", media_info.sample_rate, media_info.channel,
+             media_info.bits_per_sample, media_info.bitrate);
+    struct amp_audio_detail detail = {
+        .bitrate = media_info.bitrate,
+        .bit_width = media_info.bits_per_sample,
+        .sample_rate = media_info.sample_rate,
+        .channel = media_info.channel,
+    };
+    err =
+        amp_dashboard_swap_audio_detail(decoder->el_entry.dashboard, &detail, AMP_AUDIO_DECODER_POST_EVENT_WAIT_TICKS);
+    if (ESP_OK != err) {
+        ESP_LOGE(TAG, "swap audio detail timeout");
+        return false;
+    }
+    if (detail.bit_width != media_info.bits_per_sample || detail.sample_rate != media_info.sample_rate ||
+        detail.channel != media_info.channel) {
+        /* post event */
+        err = esp_event_post_to(decoder->el_entry.event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_AUDIO_DETAIL, 0, 0,
+                                AMP_AUDIO_DECODER_POST_EVENT_WAIT_TICKS);
+        if (ESP_OK != err) {
+            ESP_LOGW(TAG, "post AUDIO DETAIL event fail: %d(%s)", err, esp_err_to_name(err));
+        }
+    }
+
+    return true;
+}
+
 struct amp_audio_decoder_task_state {
     enum amp_state cached_state;
     TickType_t event_wait_ticks;
     bool stop_requested;
     bool new_stream;
     bool unknown_media;
+    bool wait_eos_done;
+    bool first_dec;
 };
 
-static bool amp_audio_decoder_process_notify(amp_audio_decoder_handle_t codec, struct amp_audio_decoder_task_state *task_state) {
+static bool amp_audio_decoder_process_notify(amp_audio_decoder_handle_t codec,
+                                             struct amp_audio_decoder_task_state *task_state) {
     uint32_t notify = 0;
     if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->event_wait_ticks) == pdTRUE) {
         if (notify & NOTIFY_VALUE_MASK_STATE) {
@@ -90,14 +128,17 @@ static bool amp_audio_decoder_process_notify(amp_audio_decoder_handle_t codec, s
         }
         if (notify & NOTIFY_VALUE_MASK_MEDIA_TYPE) {
             task_state->new_stream = true;
+            task_state->first_dec = true;
             task_state->unknown_media = false;
         }
         if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
             task_state->new_stream = true;
+            task_state->first_dec = true;
+            task_state->wait_eos_done = false;
         }
     }
     bool notplay;
-    if (task_state->unknown_media) {
+    if (task_state->unknown_media || task_state->wait_eos_done) {
         notplay = true;
     } else {
         notplay = task_state->cached_state != AMP_STATE_PLAYING;
@@ -142,8 +183,10 @@ static void amp_audio_decoder_task_run(void *args) {
     struct amp_audio_decoder_task_state task_state = {
         .cached_state = AMP_DASH_LOAD_STATE(codec->el_entry.dashboard),
         .unknown_media = true,
-        .new_stream = false,
+        .new_stream = true,
         .event_wait_ticks = AMP_AUDIO_DECODER_EVENT_WAIT_TICKS,
+        .wait_eos_done = false,
+        .stop_requested = false,
     };
 
 _read_loop:
@@ -168,9 +211,8 @@ _read_loop:
         }
         /* read data from input ringbuf */
         int in_size = rb_read(rb_in, (char *)in_buf, in_buf_size, AMP_AUDIO_DECODER_READ_WAIT_TICKS);
-        bool is_done = false;
         if (RB_DONE == in_size) {
-            is_done = true;
+            task_state.wait_eos_done = true;
             task_state.unknown_media = true;
             ESP_LOGW(TAG, "input ringbuf done");
             if (raw_dec.eos) {
@@ -187,7 +229,8 @@ _read_loop:
             continue;
         } else if (RB_FAIL == in_size) {
             ESP_LOGW(TAG, "read input ringbuf failed");
-                        fail_counter++;;
+            fail_counter++;
+            ;
             continue;
         } else {
             ESP_LOGD(TAG, "read input ringbuf success, size: %d", in_size);
@@ -195,8 +238,8 @@ _read_loop:
 
         /* reset input and output */
         raw_dec.buffer = in_buf;
-        raw_dec.len = is_done ? 0 : in_size;
-        raw_dec.eos = is_done;
+        raw_dec.len = task_state.wait_eos_done ? 0 : in_size;
+        raw_dec.eos = task_state.wait_eos_done;
         raw_dec.frame_recover = ESP_AUDIO_SIMPLE_DEC_RECOVERY_NONE;
 
         while (raw_dec.len > 0 || raw_dec.eos) {
@@ -207,7 +250,7 @@ _read_loop:
             err = esp_audio_simple_dec_process(dec, &raw_dec, &out_dec);
             if (ESP_AUDIO_ERR_INVALID_PARAMETER == err) {
                 ESP_LOGW(TAG, "decoder process failed");
-                            fail_counter++;;
+                fail_counter++;
                 goto _read_loop;
             } else if (ESP_AUDIO_ERR_BUFF_NOT_ENOUGH == err) {
                 ESP_LOGW(TAG, "output buffer too small, resizing");
@@ -215,7 +258,7 @@ _read_loop:
                 void *buf = amp_realloc(out_buf, ns);
                 if (!buf) {
                     ESP_LOGW(TAG, "not enough memory to resize output buffer (need %d bytes)", ns - out_buf_size);
-                                fail_counter++;;
+                    fail_counter++;
                     continue;
                 }
                 ESP_LOGI(TAG, "resized output buffer to %d bytes", ns);
@@ -226,17 +269,23 @@ _read_loop:
                 continue;
             } else if (ESP_AUDIO_ERR_NOT_SUPPORT == err) {
                 ESP_LOGW(TAG, "unsupported decoder input (type=%d)", codec->media_type);
-                            fail_counter++;;
+                fail_counter++;
                 goto _read_loop;
             }
             ESP_LOGD(TAG, "decoded %d bytes (consumed %d)", out_dec.decoded_size, raw_dec.consumed);
+
+            /* read media info */
+            if (task_state.first_dec && amp_audio_decoder_get_media_info(codec)) {
+                task_state.first_dec = false;
+            }
 
             /* write pcm data to output ringbuf */
             if (out_dec.decoded_size > 0) {
                 int write_size = 0;
                 int try_count = 0;
             _try_write:
-                write_size = rb_write(rb_out, (char *)out_buf, out_dec.decoded_size, AMP_AUDIO_DECODER_WRITE_WAIT_TICKS);
+                write_size =
+                    rb_write(rb_out, (char *)out_buf, out_dec.decoded_size, AMP_AUDIO_DECODER_WRITE_WAIT_TICKS);
                 if (RB_DONE == write_size) {
                     ESP_LOGW(TAG, "output ringbuf is set to write done");
                 } else if (RB_ABORT == write_size) {
@@ -250,7 +299,7 @@ _read_loop:
                     }
                 } else if (write_size <= 0) {
                     ESP_LOGW(TAG, "write to output ringbuf failed");
-                                fail_counter++;;
+                    fail_counter++;
                 } else {
                     ESP_LOGD(TAG, "wrote to output ringbuf: %d bytes", write_size);
                     // reset fail counter
@@ -287,9 +336,12 @@ static void amp_audio_decoder_set_output(void *args, ringbuf_handle_t rb_out) {
     decoder->rb_out = rb_out;
 }
 
-static void amp_audio_decoder_el_deinit(void *args) { return amp_audio_decoder_deinit((amp_audio_decoder_handle_t)args); }
+static void amp_audio_decoder_el_deinit(void *args) {
+    return amp_audio_decoder_deinit((amp_audio_decoder_handle_t)args);
+}
 
-static void amp_audio_decoder_report_event_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *evt_data) {
+static void amp_audio_decoder_report_event_handler(void *args, esp_event_base_t base_id, int32_t evt_id,
+                                                   void *evt_data) {
     amp_audio_decoder_handle_t codec = args;
     TaskHandle_t task = codec->el_entry.task;
     ESP_LOGD(TAG, "received event: %d", evt_id);
@@ -314,7 +366,9 @@ static const amp_element_interface_t amp_audio_decoder_element_interface = {
     .register_events = amp_audio_decoder_register_events,
 };
 
-const amp_element_interface_t *amp_audio_decoder_get_element_interface() { return &amp_audio_decoder_element_interface; }
+const amp_element_interface_t *amp_audio_decoder_get_element_interface() {
+    return &amp_audio_decoder_element_interface;
+}
 
 esp_err_t amp_audio_decoder_init(amp_audio_decoder_handle_t *codec) {
     esp_audio_simple_dec_register_default();

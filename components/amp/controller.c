@@ -6,9 +6,7 @@
 #include "amp/amp_event.h"
 #include "amp/amp_mem.h"
 #include "amp/controller.h"
-#include "amp/i2s_writer.h"
 #include "amp/ringbuf.h"
-#include "amp/sin_pcm_reader.h"
 #include "element_priv.h"
 #include "utils/esp_utils.h"
 

@@ -17,11 +17,11 @@ typedef struct {
 typedef struct {
     int max_amplitude;
     size_t frames_size;
-} amp_sine_pcm_reader_config_t;
+} amp_sine_pcm_reader_cfg_t;
 
 typedef struct sin_pcm_reader *amp_sine_pcm_reader_handle_t;
 
-esp_err_t amp_sine_pcm_reader_init(amp_sine_pcm_reader_config_t *cfg, amp_sine_pcm_reader_handle_t *reader);
+esp_err_t amp_sine_pcm_reader_init(amp_sine_pcm_reader_cfg_t *cfg, amp_sine_pcm_reader_handle_t *reader);
 
 void amp_sine_pcm_reader_set_audio_config(amp_sine_pcm_reader_handle_t reader, const amp_sine_pcm_audio_config_t *args);
 

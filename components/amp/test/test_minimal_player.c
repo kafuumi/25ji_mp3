@@ -23,7 +23,7 @@ TEST_CASE("Minimal Player", "[amp]") {
     bsp_init();
     bsp_audio_mute(false);
     amp_i2s_writer_handle_t writer;
-    amp_i2s_writer_config_t i2s_cfg = {
+    amp_i2s_writer_cfg_t i2s_cfg = {
         .i2s_port = I2S_NUM_0,
     };
     esp_err_t err = amp_i2s_writer_init(&i2s_cfg, &writer);

@@ -112,7 +112,7 @@ static const amp_element_interface_t amp_sine_pcm_element_interface = {
 // ####################### sin_pcm_reader public #######################
 // #####################################################################
 
-esp_err_t amp_sine_pcm_reader_init(amp_sine_pcm_reader_config_t *cfg, amp_sine_pcm_reader_handle_t *reader) {
+esp_err_t amp_sine_pcm_reader_init(amp_sine_pcm_reader_cfg_t *cfg, amp_sine_pcm_reader_handle_t *reader) {
     amp_sine_pcm_reader_handle_t r = amp_calloc(1, sizeof(struct sin_pcm_reader));
     if (!r) {
         return ESP_ERR_NO_MEM;
@@ -130,10 +130,9 @@ void amp_sine_pcm_reader_deinit(amp_sine_pcm_reader_handle_t reader) {
     amp_free(reader);
 }
 
-void amp_sine_pcm_reader_set_audio_config(amp_sine_pcm_reader_handle_t reader, const amp_sine_pcm_audio_config_t *args) {
+void amp_sine_pcm_reader_set_audio_config(amp_sine_pcm_reader_handle_t reader,
+                                          const amp_sine_pcm_audio_config_t *args) {
     memcpy(&(reader->args), args, sizeof(amp_sine_pcm_audio_config_t));
 }
 
-const amp_element_interface_t *amp_sine_pcm_reader_get_element_interface() {
-    return &amp_sine_pcm_element_interface;
-}
+const amp_element_interface_t *amp_sine_pcm_reader_get_element_interface() { return &amp_sine_pcm_element_interface; }

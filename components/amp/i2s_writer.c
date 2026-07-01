@@ -21,6 +21,8 @@ struct i2s_writer {
     i2s_port_t i2s_port;
     ringbuf_handle_t rb_in;
     i2s_chan_handle_t tx_chan;
+    uint8_t volume;
+    enum amp_audio_bit_width bit_width;
 };
 
 struct amp_i2s_writer_task_state {
@@ -30,9 +32,76 @@ struct amp_i2s_writer_task_state {
     bool waiting_eos_done;
 };
 
-static esp_err_t amp_i2s_writer_write_pcm(amp_i2s_writer_handle_t writer, const uint8_t *data, size_t size);
+/*
+ * ############################################################
+ * ########################## private #########################
+ * ############################################################
+ */
 
-static esp_err_t _i2s_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s_writer_output_config_t *args) {
+#define _APPLY_VOLUME(type, data, size, volume)                                                                        \
+    {                                                                                                                  \
+        type *_data = (type *)data;                                                                                    \
+        const float _volume = (float)volume / 100;                                                                     \
+        for (size_t i = 0; i < size; ++i) {                                                                            \
+            _data[i] = (type)(_data[i] * _volume);                                                                     \
+        }                                                                                                              \
+    }
+
+static inline void amp_i2s_writer_apply_volume(amp_i2s_writer_handle_t writer, void *data, size_t size) {
+    uint8_t volume = writer->volume;
+    if (volume == 100) {
+        return;
+    } else if (volume == 0) {
+        memset((void *)data, 0, size);
+        return;
+    }
+
+    switch (writer->bit_width) {
+    case AUDIO_BIT_WIDTH_8BIT:
+        _APPLY_VOLUME(int8_t, data, size, volume);
+        break;
+    case AUDIO_BIT_WIDTH_16BIT:
+        _APPLY_VOLUME(int16_t, data, size >> 1, volume);
+        break;
+    case AUDIO_BIT_WIDTH_24BIT:
+        break;
+    case AUDIO_BIT_WIDTH_32BIT:
+        _APPLY_VOLUME(int32_t, data, size >> 2, volume);
+        break;
+    }
+}
+
+static esp_err_t amp_i2s_writer_write_pcm(amp_i2s_writer_handle_t writer, void *data, size_t size) {
+    size_t written = 0;
+    if (writer->tx_chan == NULL || !writer->chan_enable) {
+        ESP_LOGE(TAG, "I2S channel not available");
+        return ESP_ERR_INVALID_STATE;
+    }
+    amp_i2s_writer_apply_volume(writer, data, size);
+    esp_err_t err = ESP_OK;
+    while (written < size) {
+        size_t wc = 0;
+        err = i2s_channel_write(writer->tx_chan, data + written, size - written, &wc, 1000);
+        if (ESP_OK != err) {
+            break;
+        }
+        if (wc == 0) {
+            break;
+        }
+        written += wc;
+    }
+    if (ESP_OK != err) {
+        ESP_LOGW(TAG, "PCM write failed: %d(%s)", err, esp_err_to_name(err));
+        return err;
+    }
+    if (written != size) {
+        ESP_LOGW(TAG, "incomplete PCM write: %zu/%zu bytes", written, size);
+        return ESP_ERR_NOT_FINISHED;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t amp_i2s_writer_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s_writer_output_cfg_t *args) {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(ctx->i2s_port, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
     i2s_chan_handle_t tx_chan = NULL;
@@ -102,7 +171,7 @@ static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, struct
             struct amp_audio_detail detail;
             err = amp_dashboard_load_audio_detail(writer->el_entry.dashboard, &detail, AMP_I2S_WRITER_READ_WAIT_TICKS);
             if (ESP_OK == err) {
-                amp_i2s_writer_output_config_t output = {
+                amp_i2s_writer_output_cfg_t output = {
                     .sample_rate = detail.sample_rate,
                 };
                 switch (detail.bit_width) {
@@ -153,6 +222,12 @@ static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, struct
     }
     return should_wait;
 }
+
+/*
+ * ############################################################
+ * ############## element interface ###########################
+ * ############################################################
+ */
 
 static void amp_i2s_writer_task(void *args) {
     amp_i2s_writer_handle_t writer = args;
@@ -244,18 +319,23 @@ static const amp_element_interface_t amp_i2s_writer_element_interface = {
     .register_events = amp_i2s_writer_register_events,
 };
 
-esp_err_t amp_i2s_writer_init(amp_i2s_writer_config_t *cfg, amp_i2s_writer_handle_t *writer) {
+/*
+ * ############################################################
+ * ########################## public #########################
+ * ############################################################
+ */
+
+esp_err_t amp_i2s_writer_init(amp_i2s_writer_cfg_t *cfg, amp_i2s_writer_handle_t *writer) {
     amp_i2s_writer_handle_t w = amp_calloc(1, sizeof(struct i2s_writer));
     if (!w) {
         return ESP_ERR_NO_MEM;
     }
-    w->chan_enable = false;
-    w->tx_chan = NULL;
     w->i2s_port = cfg->i2s_port;
-    w->rb_in = NULL;
+    w->volume = cfg->volume;
 
-    amp_i2s_writer_output_config_t args = AMP_I2S_WRITER_DEFAULT_OUTPUT_CONFIG();
-    esp_err_t err = _i2s_driver_init(w, &args);
+    amp_i2s_writer_output_cfg_t args = AMP_I2S_WRITER_DEFAULT_OUTPUT_CONFIG();
+    w->bit_width = args.slot_bit_width;
+    esp_err_t err = amp_i2s_writer_driver_init(w, &args);
     if (ESP_OK != err) {
         amp_free(w);
         return err;
@@ -286,36 +366,7 @@ void amp_i2s_writer_deinit(amp_i2s_writer_handle_t writer) {
     amp_free(writer);
 }
 
-esp_err_t amp_i2s_writer_write_pcm(amp_i2s_writer_handle_t writer, const uint8_t *data, size_t size) {
-    size_t written = 0;
-    if (writer->tx_chan == NULL || !writer->chan_enable) {
-        ESP_LOGE(TAG, "I2S channel not available");
-        return ESP_ERR_INVALID_STATE;
-    }
-    esp_err_t err = ESP_OK;
-    while (written < size) {
-        size_t wc = 0;
-        err = i2s_channel_write(writer->tx_chan, data + written, size - written, &wc, 1000);
-        if (ESP_OK != err) {
-            break;
-        }
-        if (wc == 0) {
-            break;
-        }
-        written += wc;
-    }
-    if (ESP_OK != err) {
-        ESP_LOGW(TAG, "PCM write failed: %d(%s)", err, esp_err_to_name(err));
-        return err;
-    }
-    if (written != size) {
-        ESP_LOGW(TAG, "incomplete PCM write: %zu/%zu bytes", written, size);
-        return ESP_ERR_NOT_FINISHED;
-    }
-    return ESP_OK;
-}
-
-esp_err_t amp_i2s_writer_set_output_config(amp_i2s_writer_handle_t writer, amp_i2s_writer_output_config_t *args) {
+esp_err_t amp_i2s_writer_set_output_config(amp_i2s_writer_handle_t writer, amp_i2s_writer_output_cfg_t *args) {
     i2s_chan_handle_t chan = writer->tx_chan;
     esp_err_t err = ESP_OK;
     if (writer->chan_enable) {

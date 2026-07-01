@@ -33,9 +33,12 @@ TEST_CASE("Minimal Player", "[amp]") {
     TEST_ASSERT_EQUAL(ESP_OK, err);
 
     amp_file_reader_handle_t file_reader;
-    err = amp_file_reader_init(&file_reader);
+    amp_file_reader_cfg_t reader_cfg = {
+        .playlist = NULL,
+    };
+    err = amp_file_reader_init(&reader_cfg, &file_reader);
     TEST_ASSERT_EQUAL(ESP_OK, err);
-    amp_file_reader_read_dir(file_reader, "/storage/music");
+    // amp_file_reader_read_dir(file_reader, "/storage/music");
 
     amp_controller_handle_t controller;
     err = amp_controller_init(&controller);

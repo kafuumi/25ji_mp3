@@ -24,8 +24,8 @@ void app_main() {
     esp_err_t err = fatfs_vfs_register();
     TEST_ASSERT_EQUAL(err, ESP_OK);
     ESP_LOGI(TAG, "moun storage success, path: /storage");
-    // unity_run_menu();
-    unity_run_test_by_index(2);
+    unity_run_menu();
+    // unity_run_test_by_index(2);
     esp_vfs_fat_spiflash_unmount_rw_wl("/storage", wl_handle);
     ESP_LOGI(TAG, "test finished");
 }

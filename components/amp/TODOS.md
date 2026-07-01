@@ -88,6 +88,7 @@
 - [ ] EOS 超时后广播状态变更，使 element 不会永久阻塞。
 - [ ] 所有 element done 收敛后再统一重置 ringbuf done 标记。
 - [ ] 保证每个 stream 的本地 EOS latch 都能在 `EOS_DONE` 后清除。
+- [ ] `playlist` 增加循环控制。
 
 ### P1 - I2S 输出完整性
 

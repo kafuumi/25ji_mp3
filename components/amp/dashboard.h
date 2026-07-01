@@ -41,7 +41,7 @@ struct amp_dashboard {
     /* media info */
     struct {
         volatile const char *name;
-        enum amp_audio_media_type media_type;
+        _Atomic enum amp_audio_media_type media_type;
     };
     /* media detail */
     SemaphoreHandle_t media_sem;

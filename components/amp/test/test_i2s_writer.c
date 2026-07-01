@@ -1,3 +1,7 @@
+#include <string.h>
+
+#include "esp_log.h"
+#include "esp_timer.h"
 #include "unity.h"
 
 #include "amp/controller.h"
@@ -10,6 +14,8 @@
         TEST_ASSERT_EQUAL(ESP_OK, err);                                                                                \
         TEST_ASSERT_NOT_NULL(obj);                                                                                     \
     }
+
+static const char *TAG = "i2s_writer_test";
 
 static amp_sine_pcm_reader_handle_t create_sin_pcm_reader() {
     amp_sine_pcm_reader_handle_t reader;
@@ -49,9 +55,9 @@ static amp_controller_handle_t create_controller() {
     return controller;
 }
 
-TEST_CASE("volume change to 50", "[amp][i2s_writer]") {
+TEST_CASE("volume set to 20", "[amp][i2s_writer]") {
     amp_sine_pcm_reader_handle_t reader = create_sin_pcm_reader();
-    amp_i2s_writer_handle_t writer = create_i2s_writer(50);
+    amp_i2s_writer_handle_t writer = create_i2s_writer(20);
     amp_controller_handle_t controller = create_controller();
 
     amp_element_task_config_t reader_task_cfg = {
@@ -75,4 +81,49 @@ TEST_CASE("volume change to 50", "[amp][i2s_writer]") {
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
+}
+
+static void bench_qformat_volume(int16_t *nums, int size, int vol_pct) {
+    uint32_t vol = (vol_pct << 16) / 100;
+    for (int i = 0; i < size; ++i) {
+        nums[i] = (int16_t)(((int32_t)nums[i] * vol) >> 16);
+    }
+}
+
+static void bench_float_volume(int16_t *nums, int size, int vol_pct) {
+    float vol = vol_pct / 100.0f;
+    for (int i = 0; i < size; ++i) {
+        nums[i] = (int16_t)(nums[i] * vol);
+    }
+}
+
+TEST_CASE("bench q-format vs float volume", "[amp][bench]") {
+    const int size = 1024;
+    const float loops = 1000.0;
+    int16_t orig[size];
+    int16_t nums[size];
+
+    for (int i = 0; i < size; ++i) {
+        orig[i] = i * 100;
+    }
+    int vol_pct = 33;
+
+    memcpy(nums, orig, sizeof(nums));
+    int64_t start = esp_timer_get_time();
+    for (int i = 0; i < loops; i++) {
+        bench_qformat_volume(nums, size, vol_pct);
+    }
+    int64_t end = esp_timer_get_time();
+    float ret_qformat = (float)(end - start) / loops;
+
+    memcpy(nums, orig, sizeof(nums));
+    start = esp_timer_get_time();
+    for (int i = 0; i < loops; i++) {
+        bench_float_volume(nums, size, vol_pct);
+    }
+    end = esp_timer_get_time();
+    float ret_float = (float)(end - start) / loops;
+
+    ESP_LOGI(TAG, "volume %d %: qformat=%.2f us, float=%.2f us", vol_pct, ret_qformat, ret_float);
+    TEST_ASSERT_TRUE(ret_qformat <= ret_float);
 }

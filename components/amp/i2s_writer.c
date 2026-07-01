@@ -38,23 +38,26 @@ struct amp_i2s_writer_task_state {
  * ############################################################
  */
 
+#define Q_FORMAT 16
+
 #define _APPLY_VOLUME(type, data, size, volume)                                                                        \
     {                                                                                                                  \
         type *_data = (type *)data;                                                                                    \
-        const float _volume = (float)volume / 100;                                                                     \
+        /* const float _volume = (float)volume / 100; */                                                               \
         for (size_t i = 0; i < size; ++i) {                                                                            \
-            _data[i] = (type)(_data[i] * _volume);                                                                     \
+            _data[i] = (type)((_data[i] * volume) >> Q_FORMAT);                                                        \
         }                                                                                                              \
     }
 
 static inline void amp_i2s_writer_apply_volume(amp_i2s_writer_handle_t writer, void *data, size_t size) {
-    uint8_t volume = writer->volume;
+    int32_t volume = writer->volume;
     if (volume == 100) {
         return;
     } else if (volume == 0) {
         memset((void *)data, 0, size);
         return;
     }
+    volume = (volume << Q_FORMAT) / 100;
 
     switch (writer->bit_width) {
     case AUDIO_BIT_WIDTH_8BIT:
@@ -66,7 +69,10 @@ static inline void amp_i2s_writer_apply_volume(amp_i2s_writer_handle_t writer, v
     case AUDIO_BIT_WIDTH_24BIT:
         break;
     case AUDIO_BIT_WIDTH_32BIT:
-        _APPLY_VOLUME(int32_t, data, size >> 2, volume);
+        do {
+            int64_t vol = volume;
+            _APPLY_VOLUME(int32_t, data, size >> 2, vol);
+        } while (0);
         break;
     }
 }

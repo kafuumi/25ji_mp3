@@ -8,14 +8,14 @@
 
 void audio_test() {
     amp_i2s_writer_handle_t i2s_writer;
-    amp_i2s_writer_config_t cfg = {
+    amp_i2s_writer_cfg_t cfg = {
         .i2s_port = I2S_NUM_0,
     };
     esp_err_t err = amp_i2s_writer_init(&cfg, &i2s_writer);
     ESP_ERROR_CHECK(err);
 
     amp_sine_pcm_reader_handle_t pcm_reader;
-    amp_sine_pcm_reader_config_t pcm_cfg = {
+    amp_sine_pcm_reader_cfg_t pcm_cfg = {
         .frames_size = 128,
         .max_amplitude = 3000,
     };

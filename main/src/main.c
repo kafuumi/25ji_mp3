@@ -14,9 +14,7 @@ static const char *TAG = "app";
 
 static i2c_master_bus_handle_t i2c_bus_handle = NULL;
 
-esp_err_t i2c_bus_init();
-
-esp_err_t i2c_bus_init() {
+static esp_err_t i2c_bus_init() {
     if (i2c_bus_handle != NULL) {
         ESP_LOGW(TAG, "i2c bus was initialized");
         return ESP_OK;
@@ -37,43 +35,47 @@ esp_err_t i2c_bus_init() {
     return ESP_OK;
 }
 
-extern void bench_sin_vs_sinf();
-
-extern void audio_test();
+static void sensor_read_task(void *args) {
+    aht20_init(i2c_bus_handle);
+    // audio_test();
+    while (true) {
+        float temp, humi;
+        esp_err_t err = aht20_read_temperature_humidity(&temp, &humi);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "read sensor fail: %s", esp_err_to_name(err));
+            continue;
+        }
+        ESP_LOGI(TAG, "read sensor: %.2f, %.2f", temp, humi);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+}
 
 void app_main(void) {
     printf("esp32s3 startup, enter app_main()\n");
     esp_log_level_set("U8G2_PORT", ESP_LOG_WARN);
+    esp_err_t err;
+
     bsp_init();
+    err = bsp_sd_card_mount();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "bsp init sd card fail: %s", esp_err_to_name(err));
+        return;
+    }
     bsp_audio_mute(false);
-    // esp_err_t err = bsp_sd_card_init();
-    // if (err != ESP_OK) {
-    //     ESP_LOGE(TAG, "bsp init sd card fail: %s", esp_err_to_name(err));
-    //     return;
-    // }
-    // err = i2c_bus_init();
-    // if (ESP_OK != err) {
-    //     ESP_LOGE(TAG, "new i2c master bus fail: %s", esp_err_to_name(err));
-    //     return;
-    // }
+    err = i2c_bus_init();
+    if (ESP_OK != err) {
+        ESP_LOGE(TAG, "new i2c master bus fail: %s", esp_err_to_name(err));
+        return;
+    }
+
+    xTaskCreate(sensor_read_task, "sensor", 4096, NULL, 5, NULL);
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     // err = ui_init(i2c_bus_handle);
     // if (ESP_OK != err) {
     //     ESP_LOGE(TAG, "init ui fail: %s", esp_err_to_name(err));
     //     return;
-    // }
-
-    // aht20_init(i2c_bus_handle);
-    audio_test();
-    // while (true) {
-    //   float temp, humi;
-    //   err = aht20_read_temperature_humidity(&temp, &humi);
-    //   if (err != ESP_OK) {
-    //     ESP_LOGE(TAG, "read sensor fail: %s", esp_err_to_name(err));
-    //     continue;
-    //   }
-    //   ESP_LOGI(TAG, "read sensor: %.2f, %.2f", temp, humi);
-    //   vTaskDelay(pdMS_TO_TICKS(3000));
     // }
 
     // const u8g2_port_i2c_config_t u8g2_port_cfg = {

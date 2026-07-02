@@ -7,6 +7,7 @@
 
 #include "diskio_impl.h"
 #include "diskio_sdmmc.h"
+#include "driver/sdmmc_host.h"
 #include "driver/sdspi_host.h"
 #include "esp_check.h"
 #include "esp_err.h"
@@ -15,11 +16,8 @@
 
 #include "bsp_sd_card.h"
 
-#define SDMMC_SLOT SDMMC_HOST_SLOT_1
+#define SD_CARD_SDMMC_SLOT SDMMC_HOST_SLOT_1
 #define SD_CARD_SPI_SLOT SPI2_HOST
-
-#define SD_CARD_FLAG_SPI_BUS_INIT (1 << 0)
-#define SD_CARD_FLAG_SDSPI_HOST_INIT (1 << 1)
 
 #define SD_CARD_CTX_SET_FLAG(ctx, flags, conn)                                                                         \
     {                                                                                                                  \
@@ -32,10 +30,14 @@
 
 #define SD_CARD_CTX_CHECK_FLAG(ctx, flags) ((ctx)->flag & flags)
 
-static const char *TAG = "bsp_sd";
+extern const char *TAG;
+
+#define SD_CARD_FLAG_SPI_BUS_INIT (1 << 0)
+#define SD_CARD_FLAG_SDSPI_HOST_INIT (1 << 1)
 
 typedef struct {
     sdspi_dev_handle_t card_dev;
+
     uint8_t flag;
     sdmmc_card_t *sdcard;
     FATFS *fs;
@@ -101,7 +103,7 @@ static esp_err_t bsp_sd_card_sdspi_mount(const esp_vfs_fat_mount_config_t *mount
     esp_err_t err;
 
     sdmmc_host_t host_cfg = SDSPI_HOST_DEFAULT();
-    host_cfg.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
+    host_cfg.max_freq_khz = SDMMC_FREQ_DEFAULT; // 20 MHz
 
     /* initialize spi bus */
     spi_bus_config_t bus_config = {
@@ -136,13 +138,13 @@ static esp_err_t bsp_sd_card_sdspi_mount(const esp_vfs_fat_mount_config_t *mount
     slot_config.host_id = SD_CARD_SPI_SLOT;
 
     /* initialize sdspi device */
-    sdspi_dev_handle_t card_handle;
-    err = sdspi_host_init_device(&slot_config, &card_handle);
+    sdspi_dev_handle_t dev_handle;
+    err = sdspi_host_init_device(&slot_config, &dev_handle);
     ESP_RETURN_ON_ERROR(err, TAG, "initialize sdspi host device fail: %d(%s)", err, esp_err_to_name(err));
     bool flag_sdspi_dev_init = true;
 
     /* initialize sdmmc card */
-    host_cfg.slot = card_handle;
+    host_cfg.slot = dev_handle;
     err = sdmmc_card_init(&host_cfg, sdcard);
     esp_err_t ret; /* for ESP_GOTO_XXX micro */
     ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "sdmmc card init fail: %d(%s)", err, esp_err_to_name(err));
@@ -158,7 +160,61 @@ static esp_err_t bsp_sd_card_sdspi_mount(const esp_vfs_fat_mount_config_t *mount
 
 _cleanup:
     if (flag_sdspi_dev_init) {
-        sdspi_host_remove_device(card_handle);
+        sdspi_host_remove_device(dev_handle);
+    }
+    free(sdcard);
+    return err;
+}
+
+static esp_err_t bsp_sd_card_sdmmc_mount(const esp_vfs_fat_mount_config_t *mount_cfg, const char *mount_path) {
+    sdmmc_host_t host_cfg = SDMMC_HOST_DEFAULT();
+    host_cfg.max_freq_khz = SDMMC_FREQ_HIGHSPEED; // 40 MHz
+    host_cfg.slot = SD_CARD_SDMMC_SLOT;
+
+    sdmmc_slot_config_t slot_cfg = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot_cfg.clk = BSP_PIN_SD_CLK;
+    slot_cfg.cmd = BSP_PIN_SD_CMD;
+    slot_cfg.d0 = BSP_PIN_SD_D0;
+    slot_cfg.d1 = BSP_PIN_SD_D1;
+    slot_cfg.d2 = BSP_PIN_SD_D2;
+    slot_cfg.d3 = BSP_PIN_SD_D3;
+    ESP_LOGI(TAG, "start mount sd card, clk:%d, cmd:%d, d0-d3: %d %d %d %d", slot_cfg.clk, slot_cfg.cmd, slot_cfg.d0,
+             slot_cfg.d1, slot_cfg.d2, slot_cfg.d3);
+
+    esp_err_t err;
+    /* prepare */
+    sdmmc_card_t *sdcard;
+    BYTE pdrv;
+    err = mount_prepare_mem(&pdrv, &sdcard);
+    ESP_RETURN_ON_ERROR(err, TAG, "no memory to mount sd card");
+
+    bool host_inited = false;
+    esp_err_t ret;
+
+    /* initialize sdmmc host  */
+    err = sdmmc_host_init();
+    ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "sdmmc host init fail: %d(%s)", err, esp_err_to_name(err));
+    host_inited = true;
+
+    err = sdmmc_host_init_slot(host_cfg.slot, &slot_cfg);
+    ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "sdmmc host init slot fail: %d(%s)", err, esp_err_to_name(err));
+
+    /* initialize sdmmc card */
+    err = sdmmc_card_init(&host_cfg, sdcard);
+    ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "sdmmc card init fail: %d(%s)", err, esp_err_to_name(err));
+
+    /* mount to vfs */
+    FATFS *fs;
+    err = mount_to_vfs_fat(mount_cfg, mount_path, pdrv, sdcard, &fs);
+    ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "mount sd card to vfs fail: %d(%s)", err, esp_err_to_name(err));
+
+    sd_card_ctx->fs = fs;
+    sd_card_ctx->sdcard = sdcard;
+    return err;
+
+_cleanup:
+    if (host_inited) {
+        sdmmc_host_deinit_slot(SD_CARD_SDMMC_SLOT);
     }
     free(sdcard);
     return err;
@@ -176,34 +232,12 @@ esp_err_t bsp_sd_card_mount() {
         .disk_status_check_enable = true,
     };
     const char *mount_path = BSP_SD_CARD_MOUNT_POINT;
-    sd_card_ctx = malloc(sizeof(sd_card_vfs_ctx_t));
+    sd_card_ctx = calloc(1, sizeof(sd_card_vfs_ctx_t));
     if (!sd_card_ctx) {
         return ESP_ERR_NO_MEM;
     }
     esp_err_t err;
-#ifdef CONFIG_SD_CARD_SDIO_MODE
-    // sdio
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    host.slot = SDMMC_SLOT;
-    host.flags = SDMMC_HOST_FLAG_4BIT;
-    host.flags |= SDMMC_HOST_FLAG_ALLOC_ALIGNED_BUF;
-    host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
-
-    sdmmc_slot_config_t slot_cfg = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot_cfg.clk = BOARD_PIN_SD_CLK;
-    slot_cfg.cmd = BOARD_PIN_SD_CMD;
-    slot_cfg.d0 = BOARD_PIN_SD_D0;
-    slot_cfg.d1 = BOARD_PIN_SD_D1;
-    slot_cfg.d2 = BOARD_PIN_SD_D2;
-    slot_cfg.d3 = BOARD_PIN_SD_D3;
-    ESP_LOGI(TAG, "start initialize sd card, clk:%d, cmd:%d, d0-d3: %d %d %d %d", slot_cfg.clk, slot_cfg.cmd,
-             slot_cfg.d0, slot_cfg.d1, slot_cfg.d2, slot_cfg.d3);
-    esp_err_t err = esp_vfs_fat_sdmmc_mount(mount_path, &host, &slot_cfg, &mount_cfg, &card);
-#elif CONFIG_SD_CARD_SPI_MODE
-
-#endif
-    // spi
-    err = bsp_sd_card_sdspi_mount(&mount_cfg, mount_path);
+    err = bsp_sd_card_sdmmc_mount(&mount_cfg, mount_path);
     ESP_RETURN_ON_ERROR(err, TAG, "mount sd card to %s fail: %d(%s)", mount_path, err, esp_err_to_name(err));
 
     ESP_LOGI(TAG, "mount sd card on %s successful, card info:", mount_path);

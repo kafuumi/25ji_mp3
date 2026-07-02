@@ -46,9 +46,10 @@ ALWAYS prefer MCP graph tools over grep/glob/file-search for code discovery.
 
 ## Hardware And Config Gotchas
 - `sdkconfig` currently targets `esp32s3`; `dependencies.lock` resolves ESP-IDF `5.5.4`, while `main/idf_component.yml` only requires `idf >=5.4.0`.
-- The active SD-card mode is SPI, not SDIO: `CONFIG_SD_CARD_SPI_MODE=y` in `sdkconfig`. This matches the README note that SDIO is unreliable on this board.
+- SD card mode is selected via Kconfig: `CONFIG_SD_CARD_SPI_MODE` for SPI, `CONFIG_SD_CARD_SDIO_MODE` for SDMMC. Each mode uses a different slot config struct (`sdspi_device_config_t` vs `sdmmc_slot_config_t`). When switching modes, verify that every GPIO field (`clk`, `cmd`, `d0`–`d3`) is assigned correctly — a typo like `slot_cfg.clk` in place of `slot_cfg.cmd` silently breaks SDIO initialization.
 - `bsp_sd_card_init()` mounts `/sdcard` with `format_if_mount_failed = true`, so a failed mount can trigger a reformat.
 - Board pin assignments are centralized in `components/bsp/bsp.h`; check there before changing GPIO usage.
+- **When debugging hardware-level errors** (SD card mount failures, I2S no output, I2C no response, etc.), always check for code-level issues first — wrong GPIO assignments, struct field mix-ups (e.g. `slot_cfg.clk` instead of `slot_cfg.cmd`), or misconfigured Kconfig macros — before suspecting the hardware. Errors like `ESP_ERR_TIMEOUT` can equally stem from incorrect pin configuration rather than a faulty peripheral.
 
 ## Generated And Vendored Files
 - Avoid manual edits in `build/`, `managed_components/`, `dependencies.lock`, and `sdkconfig*` unless the task is specifically to regenerate them.

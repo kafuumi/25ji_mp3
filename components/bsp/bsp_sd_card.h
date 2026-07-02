@@ -1,4 +1,3 @@
-#include <stdbool.h>
 #if !defined(_BSP_SD_CARD_H_)
 #define _BSP_SD_CARD_H_
 

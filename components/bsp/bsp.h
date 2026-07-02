@@ -1,8 +1,10 @@
 #if !defined(_BSP_H_)
 #define _BSP_H_
 
-#include "esp_err.h"
 #include <stdbool.h>
+
+#include "esp_err.h"
+#include "bsp_sd_card.h"
 
 /*
  * I2C PIN DEFINITION
@@ -11,7 +13,7 @@
 #define BSP_PIN_I2C_SDA GPIO_NUM_38
 
 /*
- * I2C PING DEFINTION
+ * I2S PING DEFINTION
  */
 // PCM 5102A 软静音引脚（未设置上拉，需要推挽输出）
 #define BSP_PIN_I2S_MUTE GPIO_NUM_15

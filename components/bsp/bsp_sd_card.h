@@ -16,13 +16,8 @@
 #define BSP_PIN_SD_D2 GPIO_NUM_9
 #define BSP_PIN_SD_D3 GPIO_NUM_10
 
-// 初始化
-esp_err_t bsp_sd_card_init();
-// 去挂载 sd card
+esp_err_t bsp_sd_card_mount();
+
 esp_err_t bsp_sd_card_unmount();
-// 格式化 sd card
-esp_err_t bsp_sd_card_format();
-// 测试 sd card 读写能力
-bool bsp_sd_card_rw_test();
 
 #endif // _BSP_SD_CARD_H_

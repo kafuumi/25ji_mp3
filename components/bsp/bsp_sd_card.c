@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <string.h>
 
+#include "diskio_impl.h"
 #include "diskio_sdmmc.h"
 #include "driver/sdspi_host.h"
 #include "esp_check.h"
@@ -17,29 +18,86 @@
 #define SDMMC_SLOT SDMMC_HOST_SLOT_1
 #define SD_CARD_SPI_SLOT SPI2_HOST
 
+#define SD_CARD_FLAG_SPI_BUS_INIT (1 << 0)
+#define SD_CARD_FLAG_SDSPI_HOST_INIT (1 << 1)
+
+#define SD_CARD_CTX_SET_FLAG(ctx, flags, conn)                                                                         \
+    {                                                                                                                  \
+        if (conn) {                                                                                                    \
+            (ctx)->flag |= flags;                                                                                      \
+        } else {                                                                                                       \
+            (ctx)->flag &= ~flags;                                                                                     \
+        }                                                                                                              \
+    }
+
+#define SD_CARD_CTX_CHECK_FLAG(ctx, flags) ((ctx)->flag & flags)
+
 static const char *TAG = "bsp_sd";
 
-static bool flag_spi_bus_init = false;
-static bool flag_sdspi_host_init = false;
-static sdmmc_card_t *card = NULL;
+typedef struct {
+    sdspi_dev_handle_t card_dev;
+    uint8_t flag;
+    sdmmc_card_t *sdcard;
+    FATFS *fs;
+} sd_card_vfs_ctx_t;
 
-static esp_err_t mount_to_vfs_fat(esp_vfs_fat_mount_config_t mount_cfg, const char *mount_path, uint8_t pdrv,
-                                  sdmmc_card_t *card) {
+static sd_card_vfs_ctx_t *sd_card_ctx = NULL;
+
+static esp_err_t mount_prepare_mem(BYTE *out_pdrv, sdmmc_card_t **out_sd_card) {
+    BYTE pdrv = FF_DRV_NOT_USED;
+    if (ff_diskio_get_drive(&pdrv) != ESP_OK || pdrv == FF_DRV_NOT_USED) {
+        ESP_LOGD(TAG, "the maximum count of volumes is already mounted");
+        return ESP_ERR_NO_MEM;
+    }
+    sdmmc_card_t *card = malloc(sizeof(sdmmc_card_t));
+    if (!card) {
+        ESP_LOGD(TAG, "alloc sdmmc_card_t fail, no memory");
+        return ESP_ERR_NO_MEM;
+    }
+    *out_pdrv = pdrv;
+    *out_sd_card = card;
+    return ESP_OK;
+}
+
+static esp_err_t mount_to_vfs_fat(const esp_vfs_fat_mount_config_t *mount_cfg, const char *mount_path, uint8_t pdrv,
+                                  sdmmc_card_t *card, FATFS **out_fs) {
     FATFS *fs = NULL;
     esp_err_t err;
     ff_diskio_register_sdmmc(pdrv, card);
-    ff_sdmmc_set_disk_status_check(pdrv, mount_cfg.disk_status_check_enable);
+    ff_sdmmc_set_disk_status_check(pdrv, mount_cfg->disk_status_check_enable);
+    ESP_LOGD(TAG, "ff_diskio register to pdrv=%i", pdrv);
     char drv[3] = {(char)('0' + pdrv), ':', 0};
 
     esp_vfs_fat_conf_t conf = {
         .base_path = mount_path,
         .fat_drive = drv,
-        .max_files = mount_cfg.max_files,
+        .max_files = mount_cfg->max_files,
     };
     err = esp_vfs_fat_register_cfg(&conf, &fs);
+    if (ESP_ERR_INVALID_STATE == err) {
+        // ignore, already registered
+    } else if (ESP_OK != err) {
+        ESP_LOGD(TAG, "register to vfs fat fail: %d", err);
+        goto _cleanup;
+    }
+    // mount
+    FRESULT ret = f_mount(fs, drv, 1);
+    if (ret != FR_OK) {
+        ESP_LOGD(TAG, "mount sd card fail: %d", ret);
+        goto _cleanup;
+    }
+    return ESP_OK;
+
+_cleanup:
+    if (fs) {
+        f_mount(NULL, drv, 0);
+    }
+    esp_vfs_fat_unregister_path(mount_path);
+    ff_diskio_unregister(pdrv);
+    return err;
 }
 
-static esp_err_t bsp_sd_card_sdspi_init(const char *mount_path) {
+static esp_err_t bsp_sd_card_sdspi_mount(const esp_vfs_fat_mount_config_t *mount_cfg, const char *mount_path) {
     esp_err_t err;
 
     sdmmc_host_t host_cfg = SDSPI_HOST_DEFAULT();
@@ -54,59 +112,75 @@ static esp_err_t bsp_sd_card_sdspi_init(const char *mount_path) {
         .quadwp_io_num = GPIO_NUM_NC,
         .max_transfer_sz = 4096,
     };
-    if (!flag_spi_bus_init) {
+
+    if (!SD_CARD_CTX_CHECK_FLAG(sd_card_ctx, SD_CARD_FLAG_SPI_BUS_INIT)) {
         err = spi_bus_initialize(SD_CARD_SPI_SLOT, &bus_config, SDSPI_DEFAULT_DMA);
         ESP_RETURN_ON_ERROR(err, TAG, "initialize spi bus fail: %d(%s)", err, esp_err_to_name(err));
     }
-    flag_spi_bus_init = true;
+    SD_CARD_CTX_SET_FLAG(sd_card_ctx, SD_CARD_FLAG_SPI_BUS_INIT, true);
+
+    /* prepare */
+    sdmmc_card_t *sdcard;
+    BYTE pdrv;
+    err = mount_prepare_mem(&pdrv, &sdcard);
+    ESP_RETURN_ON_ERROR(err, TAG, "no memory to mount sd card");
 
     /* initialize sdspi host */
-    if (!flag_sdspi_host_init) {
+    if (!SD_CARD_CTX_CHECK_FLAG(sd_card_ctx, SD_CARD_FLAG_SDSPI_HOST_INIT)) {
         err = sdspi_host_init();
         ESP_RETURN_ON_ERROR(err, TAG, "initialize sdspi host fail: %d(%s)", err, esp_err_to_name(err));
     }
-    flag_sdspi_host_init = true;
+    SD_CARD_CTX_SET_FLAG(sd_card_ctx, SD_CARD_FLAG_SDSPI_HOST_INIT, true);
     sdspi_device_config_t slot_config = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_config.gpio_cs = BSP_PIN_SD_D3;
     slot_config.host_id = SD_CARD_SPI_SLOT;
-    // esp_vfs_fat_sdspi_mount(mount_path, &host_cfg, &slot_config, &mount_cfg, &card);
+
+    /* initialize sdspi device */
     sdspi_dev_handle_t card_handle;
     err = sdspi_host_init_device(&slot_config, &card_handle);
     ESP_RETURN_ON_ERROR(err, TAG, "initialize sdspi host device fail: %d(%s)", err, esp_err_to_name(err));
     bool flag_sdspi_dev_init = true;
 
     /* initialize sdmmc card */
-    esp_err_t ret; /* for ESP_GOTO_XXX micro */
     host_cfg.slot = card_handle;
-    sdmmc_card_t *sdcard = malloc(sizeof(sdmmc_card_t));
-    if (!sdcard) {
-        err = ESP_ERR_NO_MEM;
-        goto _cleanup;
-    }
     err = sdmmc_card_init(&host_cfg, sdcard);
+    esp_err_t ret; /* for ESP_GOTO_XXX micro */
     ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "sdmmc card init fail: %d(%s)", err, esp_err_to_name(err));
 
-    /* mount sdcard to vfs */
+    /* mount to vfs */
+    FATFS *fs;
+    err = mount_to_vfs_fat(mount_cfg, mount_path, pdrv, sdcard, &fs);
+    ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "mount sd card to vfs fail: %d(%s)", err, esp_err_to_name(err));
 
-    return err;
+    sd_card_ctx->sdcard = sdcard;
+    sd_card_ctx->fs = fs;
+    return ESP_OK;
 
 _cleanup:
     if (flag_sdspi_dev_init) {
         sdspi_host_remove_device(card_handle);
     }
-    if (sdcard) {
-        free(sdcard);
-    }
+    free(sdcard);
+    return err;
 }
 
-esp_err_t bsp_sd_card_init() {
+esp_err_t bsp_sd_card_mount() {
+    if (sd_card_ctx && sd_card_ctx->sdcard) {
+        ESP_LOGW(TAG, "sd card already mount");
+        return ESP_OK;
+    }
     esp_vfs_fat_mount_config_t mount_cfg = {
         .format_if_mount_failed = false,
         .max_files = 4,
         .allocation_unit_size = 16 * 1024,
         .disk_status_check_enable = true,
     };
-
+    const char *mount_path = BSP_SD_CARD_MOUNT_POINT;
+    sd_card_ctx = malloc(sizeof(sd_card_vfs_ctx_t));
+    if (!sd_card_ctx) {
+        return ESP_ERR_NO_MEM;
+    }
+    esp_err_t err;
 #ifdef CONFIG_SD_CARD_SDIO_MODE
     // sdio
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
@@ -126,91 +200,35 @@ esp_err_t bsp_sd_card_init() {
              slot_cfg.d0, slot_cfg.d1, slot_cfg.d2, slot_cfg.d3);
     esp_err_t err = esp_vfs_fat_sdmmc_mount(mount_path, &host, &slot_cfg, &mount_cfg, &card);
 #elif CONFIG_SD_CARD_SPI_MODE
-    // spi
 
 #endif
+    // spi
+    err = bsp_sd_card_sdspi_mount(&mount_cfg, mount_path);
+    ESP_RETURN_ON_ERROR(err, TAG, "mount sd card to %s fail: %d(%s)", mount_path, err, esp_err_to_name(err));
 
-_init_finished:
-    if (ESP_OK != err) {
-        if (ESP_FAIL == err) {
-            ESP_LOGE(TAG, "failed to mount filesystem, need format sd card first");
-        } else if (ESP_ERR_TIMEOUT == err) {
-            ESP_LOGE(TAG, "initialize sd card timeout, check the connection, err: %d(%s)", err, esp_err_to_name(err));
-        } else {
-            ESP_LOGE(TAG, "initialize sd card fail: %d(%s)", err, esp_err_to_name(err));
-        }
-        return err;
-    }
     ESP_LOGI(TAG, "mount sd card on %s successful, card info:", mount_path);
-    sdmmc_card_print_info(stdout, card);
+    sdmmc_card_print_info(stdout, sd_card_ctx->sdcard);
     fflush(stdout);
     return ESP_OK;
 }
 
-esp_err_t bsp_sd_card_format() {
-    ESP_RETURN_ON_FALSE(card, ESP_FAIL, TAG, "card is not mounted");
-    const char mount_path[] = BSP_SD_CARD_MOUNT_POINT;
-
-    esp_err_t err = esp_vfs_fat_sdcard_format(mount_path, card);
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "format sd card fail: %d(%s)", err, esp_err_to_name(err));
-    }
-    return err;
-}
-
 esp_err_t sd_card_unmount() {
-    ESP_RETURN_ON_FALSE(card, ESP_FAIL, TAG, "card is not mounted");
-    const char mount_path[] = BSP_SD_CARD_MOUNT_POINT;
-    esp_err_t err = esp_vfs_fat_sdcard_unmount(mount_path, card);
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "unmount sd card fail: %d(%s)", err, esp_err_to_name(err));
-        return err;
-    }
-    ESP_LOGI(TAG, "unmount sd card successful");
-    return err;
-}
+    // TODO
+    ESP_RETURN_ON_FALSE(sd_card_ctx->sdcard, ESP_FAIL, TAG, "card is not mounted");
+    const char *mount_path = BSP_SD_CARD_MOUNT_POINT;
 
-bool bsp_sd_card_rw_test() {
-    ESP_LOGI(TAG, "start test sd card by read and write");
-    ESP_RETURN_ON_FALSE(card, ESP_FAIL, TAG, "card is not mounted");
-    const char test_path[] = BSP_SD_CARD_MOUNT_POINT "/test.bin";
-    const char test_data[] = "hello sd_card";
+    BYTE pdrv = ff_diskio_get_pdrv_card(sd_card_ctx->sdcard);
+    char drv[3] = {(char)('0' + pdrv), ':', 0};
+    f_mount(0, drv, 0);
+    ff_diskio_unregister(pdrv);
 
-    FILE *fp = fopen(test_path, "w");
-    bool ret = false;
-    if (NULL == fp) {
-        ESP_LOGE(TAG, "failed to open test file, err:%d(%s)", errno, strerror(errno));
-        return false;
-    }
-    int wn = fprintf(fp, test_data);
-    if (wn < strlen(test_data)) {
-        ESP_LOGE(TAG, "failed to write file to sd card, err:%d(%s)", errno, strerror(errno));
-        ret = false;
-        goto cleanup;
-    }
-    fflush(fp);
-    fclose(fp);
-    fp = NULL;
+    sdspi_host_remove_device(sd_card_ctx->card_dev);
+    free(sd_card_ctx->sdcard);
 
-    // test read
-    ESP_LOGI(TAG, "write file to sd card successful, try read file");
-    fp = fopen(test_path, "r");
-    if (NULL == fp) {
-        ESP_LOGE(TAG, "failed to open test file, err:%d(%s)", errno, strerror(errno));
-        ret = false;
-        return false;
-    }
-    char buf[10] = {'\0'};
-    rewind(fp);
-    if (!fgets(buf, sizeof(buf), fp)) {
-        ESP_LOGE(TAG, "failed to read test file, err:%d(%s)", errno, strerror(errno));
-        ret = false;
-        goto cleanup;
-    }
-    ESP_LOGI(TAG, "read file from sd card success, content:%s", buf);
-    ret = true;
-cleanup:
-    fclose(fp);
-    remove(test_path);
-    return ret;
+    esp_vfs_fat_unregister_path(mount_path);
+
+    sd_card_ctx->card_dev = 0;
+    sd_card_ctx->sdcard = NULL;
+    sd_card_ctx->fs = NULL;
+    return ESP_OK;
 }

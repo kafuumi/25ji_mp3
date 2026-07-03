@@ -30,17 +30,16 @@
 
 #define SD_CARD_CTX_CHECK_FLAG(ctx, flags) ((ctx)->flag & flags)
 
-extern const char *TAG;
+static const char *TAG = "bsp_sd";
 
 #define SD_CARD_FLAG_SPI_BUS_INIT (1 << 0)
 #define SD_CARD_FLAG_SDSPI_HOST_INIT (1 << 1)
 
 typedef struct {
-    sdspi_dev_handle_t card_dev;
-
+    sdspi_dev_handle_t sdspi_dev;
     uint8_t flag;
     sdmmc_card_t *sdcard;
-    FATFS *fs;
+    FATFS *fs; // not used
 } sd_card_vfs_ctx_t;
 
 static sd_card_vfs_ctx_t *sd_card_ctx = NULL;
@@ -138,7 +137,7 @@ static esp_err_t bsp_sd_card_sdspi_mount(const esp_vfs_fat_mount_config_t *mount
     slot_config.host_id = SD_CARD_SPI_SLOT;
 
     /* initialize sdspi device */
-    sdspi_dev_handle_t dev_handle;
+    sdspi_dev_handle_t dev_handle = -1;
     err = sdspi_host_init_device(&slot_config, &dev_handle);
     ESP_RETURN_ON_ERROR(err, TAG, "initialize sdspi host device fail: %d(%s)", err, esp_err_to_name(err));
     bool flag_sdspi_dev_init = true;
@@ -146,7 +145,7 @@ static esp_err_t bsp_sd_card_sdspi_mount(const esp_vfs_fat_mount_config_t *mount
     /* initialize sdmmc card */
     host_cfg.slot = dev_handle;
     err = sdmmc_card_init(&host_cfg, sdcard);
-    esp_err_t ret; /* for ESP_GOTO_XXX micro */
+    esp_err_t ret; // for ESP_GOTO_XXX micro
     ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "sdmmc card init fail: %d(%s)", err, esp_err_to_name(err));
 
     /* mount to vfs */
@@ -154,6 +153,7 @@ static esp_err_t bsp_sd_card_sdspi_mount(const esp_vfs_fat_mount_config_t *mount
     err = mount_to_vfs_fat(mount_cfg, mount_path, pdrv, sdcard, &fs);
     ESP_GOTO_ON_ERROR(err, _cleanup, TAG, "mount sd card to vfs fail: %d(%s)", err, esp_err_to_name(err));
 
+    sd_card_ctx->sdspi_dev = dev_handle;
     sd_card_ctx->sdcard = sdcard;
     sd_card_ctx->fs = fs;
     return ESP_OK;
@@ -236,6 +236,8 @@ esp_err_t bsp_sd_card_mount() {
     if (!sd_card_ctx) {
         return ESP_ERR_NO_MEM;
     }
+    sd_card_ctx->sdspi_dev = -1;
+
     esp_err_t err;
     err = bsp_sd_card_sdmmc_mount(&mount_cfg, mount_path);
     ESP_RETURN_ON_ERROR(err, TAG, "mount sd card to %s fail: %d(%s)", mount_path, err, esp_err_to_name(err));
@@ -246,9 +248,11 @@ esp_err_t bsp_sd_card_mount() {
     return ESP_OK;
 }
 
-esp_err_t sd_card_unmount() {
-    // TODO
-    ESP_RETURN_ON_FALSE(sd_card_ctx->sdcard, ESP_FAIL, TAG, "card is not mounted");
+esp_err_t bsp_sd_card_unmount() {
+    if (!sd_card_ctx->sdcard) {
+        ESP_LOGW(TAG, "sd card not mount or alread unmount");
+        return ESP_OK;
+    }
     const char *mount_path = BSP_SD_CARD_MOUNT_POINT;
 
     BYTE pdrv = ff_diskio_get_pdrv_card(sd_card_ctx->sdcard);
@@ -256,12 +260,17 @@ esp_err_t sd_card_unmount() {
     f_mount(0, drv, 0);
     ff_diskio_unregister(pdrv);
 
-    sdspi_host_remove_device(sd_card_ctx->card_dev);
+    if (sd_card_ctx->sdspi_dev >= 0) {
+        // spi, remove device
+        sdspi_host_remove_device(sd_card_ctx->sdspi_dev);
+    } else {
+        // sdmmc, deinit slot
+        sdmmc_host_deinit_slot(SD_CARD_SDMMC_SLOT);
+    }
     free(sd_card_ctx->sdcard);
-
     esp_vfs_fat_unregister_path(mount_path);
 
-    sd_card_ctx->card_dev = 0;
+    sd_card_ctx->sdspi_dev = -1;
     sd_card_ctx->sdcard = NULL;
     sd_card_ctx->fs = NULL;
     return ESP_OK;

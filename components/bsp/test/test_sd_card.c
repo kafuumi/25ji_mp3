@@ -31,9 +31,42 @@ static void bsp_sd_card_test_write() {
     close(fd);
 }
 
-TEST_CASE("test sd card write", "[bsp][sd]") { bsp_sd_card_test_write(); }
+TEST_CASE("test mutile mount", "[bsp][sd]") {
+    int times = 3;
+    esp_err_t err;
+    for (int i = 0; i < times; i++) {
+        err = bsp_sd_card_mount();
+        TEST_ASSERT_EQUAL(ESP_OK, err);
+    }
+
+    err = bsp_sd_card_unmount();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+}
+
+TEST_CASE("test mutile unmount", "[bsp][sd]") {
+    int times = 3;
+    esp_err_t err;
+    err = bsp_sd_card_mount();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    for (int i = 0; i < times; i++) {
+        err = bsp_sd_card_unmount();
+        TEST_ASSERT_EQUAL(ESP_OK, err);
+    }
+}
+
+TEST_CASE("test sd card write", "[bsp][sd]") {
+    esp_err_t err;
+    err = bsp_sd_card_mount();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    bsp_sd_card_test_write();
+}
 
 TEST_CASE("test sd card read and write", "[bsp][sd]") {
+    esp_err_t err;
+    err = bsp_sd_card_mount();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
 
     bsp_sd_card_test_write();
     int fd = open(test_path, O_RDONLY);
@@ -55,6 +88,10 @@ TEST_CASE("test sd card read and write", "[bsp][sd]") {
 }
 
 TEST_CASE("bench test sd card rw", "[bsp][sd][bench]") {
+    esp_err_t err;
+    err = bsp_sd_card_mount();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
     size_t buf_len = 1024;
     uint8_t *buf = malloc(sizeof(uint8_t) * buf_len);
     TEST_ASSERT_NOT_NULL(buf);

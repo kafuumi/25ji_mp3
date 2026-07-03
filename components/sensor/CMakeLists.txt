@@ -1,5 +1,5 @@
 set(SRC_FILES "aht20.c")
 
 idf_component_register(SRCS ${SRC_FILES}
-        INCLUDE_DIRS "."
+        INCLUDE_DIRS "include"
         REQUIRES esp_driver_i2c)

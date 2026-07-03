@@ -17,7 +17,11 @@ esp_err_t bsp_init() {
     ESP_RETURN_ON_ERROR(err, TAG, "set mute gpio ping direction fail: %d(%s)", err, esp_err_to_name(err));
 
     err = bsp_sd_card_mount();
-    return err;
+    if (ESP_OK != err) {
+        ESP_LOGW(TAG, "mount sd card fail");
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t bsp_audio_mute(bool mute) {

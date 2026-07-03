@@ -19,8 +19,10 @@ typedef struct amp_element_interface {
 typedef struct {
     const char *name;
     const int stack_size;
+    const int task_priority;
     const size_t output_rb_size;
     const amp_element_interface_t *intf;
+    const int affinity_core;
 } amp_element_task_config_t;
 
 enum amp_element_role {

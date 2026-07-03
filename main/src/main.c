@@ -1,93 +1,190 @@
-#include "aht20.h"
+#include "button_gpio.h"
 #include "driver/i2c_master.h"
+#include "esp_check.h"
 #include "esp_err.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
 
+#include "amp/audio_decoder.h"
+#include "amp/controller.h"
+#include "amp/file_reader.h"
+#include "amp/i2s_writer.h"
+#include "amp/playlist.h"
 #include "bsp.h"
-#include "bsp_sd_card.h"
+#include "sensor/aht20.h"
 #include "ui.h"
 
-#define PORT_I2C I2C_NUM_0
+#define DEFAULT_PLAYLIST_DIR BSP_SD_CARD_MOUNT_POINT "/music"
+
+#define AMP_TASK_CPU_CORE PRO_CPU_NUM
+#define AMP_TASK_DEFAULT_PRIORITY 15
+
+#define DEFAULT_ELEMENT_TASK_CFG()                                                                                     \
+    {                                                                                                                  \
+        .output_rb_size = 1024,                                                                                        \
+        .stack_size = 4096,                                                                                            \
+        .affinity_core = AMP_TASK_CPU_CORE,                                                                            \
+        .task_priority = AMP_TASK_DEFAULT_PRIORITY,                                                                    \
+    }
 
 static const char *TAG = "app";
 
-static i2c_master_bus_handle_t i2c_bus_handle = NULL;
+static amp_controller_handle_t g_amp_controller = NULL;
+static i2c_master_bus_handle_t g_i2c_bus = NULL;
+static TaskHandle_t g_sensor_task = NULL;
+
+//////////////////////////////////////////////////////////////////////
+
+static esp_err_t amp_player_init() {
+    // set to mute
+    bsp_audio_mute(true);
+    if (g_amp_controller) {
+        return ESP_OK;
+    }
+
+    esp_err_t err;
+
+    amp_playlist_handle_t playlist;
+    amp_playlist_cfg_t pl_cfg = {
+        .base_dir = DEFAULT_PLAYLIST_DIR,
+        .recursion = true,
+    };
+    err = amp_playlist_init(&pl_cfg, &playlist);
+    ESP_RETURN_ON_ERROR(err, TAG, "create amp playlist fail: %d", err);
+
+    amp_file_reader_handle_t file_reader;
+    amp_file_reader_cfg_t fr_cfg = {
+        .playlist = playlist,
+    };
+    err = amp_file_reader_init(&fr_cfg, &file_reader);
+    ESP_RETURN_ON_ERROR(err, TAG, "create amp file reader fail: %d", err);
+
+    amp_audio_decoder_handle_t decoder;
+    err = amp_audio_decoder_init(&decoder);
+    ESP_RETURN_ON_ERROR(err, TAG, "create amp audio codec fail: %d", err);
+
+    amp_i2s_writer_handle_t i2s_writer;
+    amp_i2s_writer_cfg_t iw_cfg = {
+        .i2s_port = I2S_NUM_0,
+        .volume = 50,
+    };
+    err = amp_i2s_writer_init(&iw_cfg, &i2s_writer);
+    ESP_RETURN_ON_ERROR(err, TAG, "create amp i2s writer fail: %d", err);
+
+    amp_controller_handle_t controller;
+    err = amp_controller_init(&controller);
+    ESP_RETURN_ON_ERROR(err, TAG, "create amp controller fail: %d", err);
+
+    amp_element_task_config_t task_cfg = DEFAULT_ELEMENT_TASK_CFG();
+    task_cfg.intf = amp_file_reader_get_element_interface();
+    task_cfg.name = "file_reader";
+    err = amp_controller_append_reader(controller, (amp_element_handle_t)file_reader, &task_cfg);
+    ESP_RETURN_ON_ERROR(err, TAG, "append file reader fail: %d", err);
+
+    task_cfg.intf = amp_audio_decoder_get_element_interface();
+    task_cfg.name = "audio_decoder";
+    err = amp_controller_append_processor(controller, (amp_element_handle_t)decoder, &task_cfg);
+    ESP_RETURN_ON_ERROR(err, TAG, "append audio decoder fail: %d", err);
+
+    task_cfg.intf = amp_i2s_writer_get_element_interface();
+    task_cfg.name = "i2s_writer";
+    err = amp_controller_append_writer(controller, (amp_element_handle_t)i2s_writer, &task_cfg);
+    ESP_RETURN_ON_ERROR(err, TAG, "append i2s writer fail: %d", err);
+
+    g_amp_controller = controller;
+    return ESP_OK;
+}
+
+//////////////////////////////////////////////////////////////////////
+
+#define APP_I2C_PORT I2C_NUM_0
 
 static esp_err_t i2c_bus_init() {
-    if (i2c_bus_handle != NULL) {
-        ESP_LOGW(TAG, "i2c bus was initialized");
+    if (g_i2c_bus) {
         return ESP_OK;
     }
     const i2c_master_bus_config_t i2c_cfg = {
         .clk_source = I2C_CLK_SRC_DEFAULT,
-        .flags.enable_internal_pullup = false,
-        .i2c_port = PORT_I2C,
+        .flags = {.enable_internal_pullup = false},
+        .i2c_port = APP_I2C_PORT,
         .scl_io_num = BSP_PIN_I2C_SCL,
         .sda_io_num = BSP_PIN_I2C_SDA,
     };
-    esp_err_t err = i2c_new_master_bus(&i2c_cfg, &i2c_bus_handle);
+    i2c_master_bus_handle_t i2c_bus;
+    esp_err_t err = i2c_new_master_bus(&i2c_cfg, &i2c_bus);
     if (ESP_OK != err) {
-        ESP_LOGE(TAG, "fnew i2c master bus fail: %d(%s)", err, esp_err_to_name(err));
+        ESP_LOGE(TAG, "new i2c master bus fail: %d(%s)", err, esp_err_to_name(err));
         return err;
     }
     ESP_LOGI(TAG, "success to initialize i2c bus, sda: %d, scl: %d", i2c_cfg.sda_io_num, i2c_cfg.scl_io_num);
+    g_i2c_bus = i2c_bus;
     return ESP_OK;
 }
 
+//////////////////////////////////////////////////////////////////////
+
+#define SENSOR_AHT20_READ_DELAY pdMS_TO_TICKS(5000)
+#define SENSOR_AHT20_TASK_CPU_NUM APP_CPU_NUM
+#define SENSOR_AHT20_TASK_PRIORITY 10
+#define SENSOR_AHT20_TASK_SIZE 4096
+
 static void sensor_read_task(void *args) {
-    aht20_init(i2c_bus_handle);
-    // audio_test();
+    float temp, humi;
+    esp_err_t err;
     while (true) {
-        float temp, humi;
-        esp_err_t err = aht20_read_temperature_humidity(&temp, &humi);
+        err = aht20_read_temperature_humidity(&temp, &humi);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "read sensor fail: %s", esp_err_to_name(err));
+            ESP_LOGW(TAG, "read sensor fail: %s", esp_err_to_name(err));
             continue;
         }
-        ESP_LOGI(TAG, "read sensor: %.2f, %.2f", temp, humi);
-        vTaskDelay(pdMS_TO_TICKS(3000));
+        ESP_LOGD(TAG, "read sensor: %.2f, %.2f", temp, humi);
+        vTaskDelay(SENSOR_AHT20_READ_DELAY);
     }
 }
 
-void app_main(void) {
-    printf("esp32s3 startup, enter app_main()\n");
-    esp_log_level_set("U8G2_PORT", ESP_LOG_WARN);
+///////////////////////////////////////////////////////////////
+
+#define GPIO_BTN_DEFAULT_CFG(io_num)                                                                                   \
+    {                                                                                                                  \
+        .gpio_num = io_num,                                                                                            \
+        .active_level = BSP_PIN_BTN_ACTIVE_LEVEL,                                                                      \
+        .disable_pull = true,                                                                                          \
+        .enable_power_save = true,                                                                                     \
+    }
+
+static esp_err_t button_init() {
+    const button_config_t btn_cfg = {0};
     esp_err_t err;
 
-    bsp_init();
-    err = bsp_sd_card_mount();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "bsp init sd card fail: %s", esp_err_to_name(err));
-        return;
+    const button_gpio_config_t prev_btn_cfg = GPIO_BTN_DEFAULT_CFG(BSP_PIN_BTN_PREV);
+    button_handle_t prev_btn;
+    err = iot_button_new_gpio_device(&btn_cfg, &prev_btn_cfg, &prev_btn);
+    ESP_RETURN_ON_ERROR(err, TAG, "new prev gpio button fail: %d", err);
+
+    const button_gpio_config_t next_btn_cfg = GPIO_BTN_DEFAULT_CFG(BSP_PIN_BTN_NEXT);
+    button_handle_t next_btn;
+    err = iot_button_new_gpio_device(&btn_cfg, &next_btn_cfg, &next_btn);
+    ESP_RETURN_ON_ERROR(err, TAG, "new next gpio button fail: %d", err);
+
+    return ESP_OK;
+}
+
+void app_main(void) {
+    ESP_LOGI(TAG, "25ji mp3 start...");
+    ESP_ERROR_CHECK(i2c_bus_init());
+    ESP_ERROR_CHECK(ui_init(g_i2c_bus));
+    ESP_ERROR_CHECK(bsp_init());
+    ESP_ERROR_CHECK(amp_player_init());
+    ESP_ERROR_CHECK(button_init());
+    ESP_ERROR_CHECK(aht20_init(g_i2c_bus));
+
+    BaseType_t ret;
+    TaskHandle_t sensor_task;
+    ret = xTaskCreatePinnedToCore(sensor_read_task, "sensor", SENSOR_AHT20_TASK_SIZE, NULL, SENSOR_AHT20_TASK_PRIORITY,
+                                  &sensor_task, SENSOR_AHT20_TASK_CPU_NUM);
+    if (ret != pdTRUE) {
+        ESP_LOGE(TAG, "create sensor task fail");
+        abort();
     }
-    bsp_audio_mute(false);
-    err = i2c_bus_init();
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "new i2c master bus fail: %s", esp_err_to_name(err));
-        return;
-    }
+    g_sensor_task = sensor_task;
 
-    xTaskCreate(sensor_read_task, "sensor", 4096, NULL, 5, NULL);
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    // err = ui_init(i2c_bus_handle);
-    // if (ESP_OK != err) {
-    //     ESP_LOGE(TAG, "init ui fail: %s", esp_err_to_name(err));
-    //     return;
-    // }
-
-    // const u8g2_port_i2c_config_t u8g2_port_cfg = {
-    //     .i2c_bus = i2c_bus_handle,
-    //     .rotation = ROTATION_180,
-    //     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-    //     .dev_address = 0x3C,
-    //     .scl_freq_hz = 100 * 1000,
-    //     .buf_size = 32,
-    // };
-    // u8g2 = (u8g2_t *) malloc(sizeof(u8g2_t));
-    // err = u8g2_i2c_init(&u8g2_port_cfg, u8g2);
-    // ESP_ERROR_CHECK(err);
-    // u8g2_SetFont(u8g2, u8g2_font_ncenB08_tr);
+    ESP_LOGI(TAG, "app start finished, enjoy!");
 }

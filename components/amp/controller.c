@@ -99,7 +99,13 @@ struct amp_controller {
 static esp_err_t inline element_task_run(amp_element_handle_t el) {
     if (el->intf && el->intf->run_task) {
         TaskHandle_t t;
-        BaseType_t ret = xTaskCreate((el->intf->run_task), el->name, el->stack_size, (void *)el, 1, &t);
+        BaseType_t ret;
+        if (el->affinity_core >= 0) {
+            ret = xTaskCreatePinnedToCore((el->intf->run_task), el->name, el->stack_size, (void *)el, el->task_priority,
+                                          &t, el->affinity_core);
+        } else {
+            ret = xTaskCreate((el->intf->run_task), el->name, el->stack_size, (void *)el, el->task_priority, &t);
+        }
         if (ret == pdTRUE) {
             el->task = t;
             return ESP_OK;
@@ -168,6 +174,8 @@ static inline esp_err_t amp_controller_append(amp_controller_handle_t controller
     // setup
     el->name = strdup(cfg->name);
     el->stack_size = cfg->stack_size;
+    el->affinity_core = cfg->affinity_core;
+    el->task_priority = cfg->task_priority;
     el->intf = intf;
     el->dashboard = controller->dashboard;
     el->task = NULL;

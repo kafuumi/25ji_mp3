@@ -19,6 +19,8 @@ struct amp_element {
 
     char *name;
     int stack_size;
+    int affinity_core;
+    int task_priority;
     enum amp_element_role role;
     const amp_element_interface_t *intf;
 

@@ -3,8 +3,8 @@
 
 #include <stdbool.h>
 
-#include "esp_err.h"
 #include "bsp_sd_card.h"
+#include "esp_err.h"
 
 /*
  * I2C PIN DEFINITION
@@ -27,6 +27,9 @@
  */
 #define BSP_PIN_BTN_PREV GPIO_NUM_5
 #define BSP_PIN_BTN_NEXT GPIO_NUM_6
+
+#define BSP_PIN_BTN_ACTIVE_LEVEL 1
+#define BSP_PIN_BTN_DEACTIVE_LEVEL 0
 
 esp_err_t bsp_init();
 

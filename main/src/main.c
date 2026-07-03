@@ -2,6 +2,7 @@
 #include "driver/i2c_master.h"
 #include "esp_check.h"
 #include "esp_err.h"
+#include "iot_button.h"
 
 #include "amp/audio_decoder.h"
 #include "amp/controller.h"
@@ -11,6 +12,8 @@
 #include "bsp.h"
 #include "sensor/aht20.h"
 #include "ui.h"
+
+#include "utils/debug_utils.h"
 
 #define DEFAULT_PLAYLIST_DIR BSP_SD_CARD_MOUNT_POINT "/music"
 
@@ -30,6 +33,7 @@ static const char *TAG = "app";
 static amp_controller_handle_t g_amp_controller = NULL;
 static i2c_master_bus_handle_t g_i2c_bus = NULL;
 static TaskHandle_t g_sensor_task = NULL;
+static bool g_flag_playing = false;
 
 //////////////////////////////////////////////////////////////////////
 
@@ -89,6 +93,9 @@ static esp_err_t amp_player_init() {
     err = amp_controller_append_writer(controller, (amp_element_handle_t)i2s_writer, &task_cfg);
     ESP_RETURN_ON_ERROR(err, TAG, "append i2s writer fail: %d", err);
 
+    err = amp_controller_run(controller);
+    ESP_RETURN_ON_ERROR(err, TAG, "run amp element fail: %d", err);
+
     g_amp_controller = controller;
     return ESP_OK;
 }
@@ -146,9 +153,21 @@ static void sensor_read_task(void *args) {
     {                                                                                                                  \
         .gpio_num = io_num,                                                                                            \
         .active_level = BSP_PIN_BTN_ACTIVE_LEVEL,                                                                      \
-        .disable_pull = true,                                                                                          \
+        .disable_pull = false,                                                                                         \
         .enable_power_save = true,                                                                                     \
     }
+
+static void any_btn_single_click_cb(void *args, void *user_data) {
+    ESP_LOGI(TAG, "any button clicked");
+    if (g_flag_playing) {
+        bsp_audio_mute(true);
+        amp_controller_action_pause(g_amp_controller);
+    } else {
+        bsp_audio_mute(false);
+        amp_controller_action_play(g_amp_controller);
+    }
+    g_flag_playing = !g_flag_playing;
+}
 
 static esp_err_t button_init() {
     const button_config_t btn_cfg = {0};
@@ -163,6 +182,14 @@ static esp_err_t button_init() {
     button_handle_t next_btn;
     err = iot_button_new_gpio_device(&btn_cfg, &next_btn_cfg, &next_btn);
     ESP_RETURN_ON_ERROR(err, TAG, "new next gpio button fail: %d", err);
+
+    const button_gpio_config_t any_btn_cfg = GPIO_BTN_DEFAULT_CFG(BSP_PIN_BTN_ANY);
+    button_handle_t any_btn;
+    err = iot_button_new_gpio_device(&btn_cfg, &any_btn_cfg, &any_btn);
+    ESP_RETURN_ON_ERROR(err, TAG, "new any gpio button fail: %d", err);
+
+    err = iot_button_register_cb(any_btn, BUTTON_SINGLE_CLICK, NULL, any_btn_single_click_cb, NULL);
+    ESP_RETURN_ON_ERROR(err, TAG, "any btn register SINGLE_CLICK event fail: %d", err);
 
     return ESP_OK;
 }
@@ -186,5 +213,6 @@ void app_main(void) {
     }
     g_sensor_task = sensor_task;
 
+    start_print_heap_task();
     ESP_LOGI(TAG, "app start finished, enjoy!");
 }

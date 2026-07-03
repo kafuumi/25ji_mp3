@@ -124,7 +124,7 @@ esp_err_t aht20_dev_init() {
         ESP_LOGE(TAG, "send init cmd fail: %d(%s)", err, esp_err_to_name(err));
         return err;
     }
-    ESP_LOGI(TAG, "success to initialize aht20 device, scl speed: %d, dev addr: %x", AHT20_SCL, AHT20_ADDR);
+    ESP_LOGI(TAG, "success to initialize aht20 device, scl speed: %d, dev addr: 0x%x", AHT20_SCL, AHT20_ADDR);
     return ESP_OK;
 }
 

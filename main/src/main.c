@@ -34,6 +34,7 @@ static amp_controller_handle_t g_amp_controller = NULL;
 static i2c_master_bus_handle_t g_i2c_bus = NULL;
 static TaskHandle_t g_sensor_task = NULL;
 static bool g_flag_playing = false;
+static button_handle_t *g_button_list = NULL;
 
 //////////////////////////////////////////////////////////////////////
 
@@ -157,6 +158,10 @@ static void sensor_read_task(void *args) {
         .enable_power_save = true,                                                                                     \
     }
 
+static void handle_volume_change_event(int volume, int diff) {
+    ESP_LOGI(TAG, "volume changed, current: %d, diff: %d", volume, diff);
+}
+
 static void any_btn_single_click_cb(void *args, void *user_data) {
     ESP_LOGI(TAG, "any button clicked");
     if (g_flag_playing) {
@@ -169,29 +174,64 @@ static void any_btn_single_click_cb(void *args, void *user_data) {
     g_flag_playing = !g_flag_playing;
 }
 
+static void button_deinit() {
+    if (!g_button_list) {
+        return;
+    }
+    button_handle_t *btn_list = g_button_list;
+    while (*btn_list) {
+        iot_button_delete(*btn_list);
+        ++btn_list;
+    }
+    free(g_button_list);
+}
+
 static esp_err_t button_init() {
+    if (g_button_list) {
+        return ESP_OK;
+    }
+    int btn_size = 3;
+    g_button_list = malloc(sizeof(button_handle_t) * (btn_size + 1));
+    if (!g_button_list) {
+        return ESP_ERR_NO_MEM;
+    }
+    g_button_list[btn_size] = NULL; // end flag
+
+    button_handle_t *btn_list = g_button_list;
     const button_config_t btn_cfg = {0};
-    esp_err_t err;
+    esp_err_t ret = ESP_OK;
 
     const button_gpio_config_t prev_btn_cfg = GPIO_BTN_DEFAULT_CFG(BSP_PIN_BTN_PREV);
     button_handle_t prev_btn;
-    err = iot_button_new_gpio_device(&btn_cfg, &prev_btn_cfg, &prev_btn);
-    ESP_RETURN_ON_ERROR(err, TAG, "new prev gpio button fail: %d", err);
+    ESP_GOTO_ON_ERROR(iot_button_new_gpio_device(&btn_cfg, &prev_btn_cfg, &prev_btn), _cleanup, TAG,
+                      "new prev gpio button fail: %d", ret);
+    *btn_list = prev_btn;
+    btn_list++;
 
     const button_gpio_config_t next_btn_cfg = GPIO_BTN_DEFAULT_CFG(BSP_PIN_BTN_NEXT);
     button_handle_t next_btn;
-    err = iot_button_new_gpio_device(&btn_cfg, &next_btn_cfg, &next_btn);
-    ESP_RETURN_ON_ERROR(err, TAG, "new next gpio button fail: %d", err);
+    ESP_GOTO_ON_ERROR(iot_button_new_gpio_device(&btn_cfg, &next_btn_cfg, &next_btn), _cleanup, TAG,
+                      "new next gpio button fail: %d", ret);
+    *btn_list = next_btn;
+    btn_list++;
 
     const button_gpio_config_t any_btn_cfg = GPIO_BTN_DEFAULT_CFG(BSP_PIN_BTN_ANY);
     button_handle_t any_btn;
-    err = iot_button_new_gpio_device(&btn_cfg, &any_btn_cfg, &any_btn);
-    ESP_RETURN_ON_ERROR(err, TAG, "new any gpio button fail: %d", err);
+    ESP_GOTO_ON_ERROR(iot_button_new_gpio_device(&btn_cfg, &any_btn_cfg, &any_btn), _cleanup, TAG,
+                      "new any gpio button fail: %d", ret);
+    *btn_list = any_btn;
+    btn_list++;
 
-    err = iot_button_register_cb(any_btn, BUTTON_SINGLE_CLICK, NULL, any_btn_single_click_cb, NULL);
-    ESP_RETURN_ON_ERROR(err, TAG, "any btn register SINGLE_CLICK event fail: %d", err);
+    ESP_GOTO_ON_ERROR(iot_button_register_cb(any_btn, BUTTON_SINGLE_CLICK, NULL, any_btn_single_click_cb, NULL),
+                      _cleanup, TAG, "any btn register SINGLE_CLICK event fail: %d", ret);
+
+    ESP_GOTO_ON_ERROR(bsp_btn_plustor_registor_cb(handle_volume_change_event, 10, 3000), _cleanup, TAG,
+                      "register plustor button event fail: %d", ret);
 
     return ESP_OK;
+_cleanup:
+    button_deinit();
+    return ret;
 }
 
 void app_main(void) {

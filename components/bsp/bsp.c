@@ -1,3 +1,4 @@
+#include <math.h>
 
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
@@ -35,7 +36,7 @@ static void bsp_button_plustor_read_task(void *args) {
         last_val = value;
         adc_oneshot_read(g_plustor_btn.adc_unit, BSP_PIN_BTN_PLUSTOR_ADC_CHAN, &value);
         int diff = value - last_val;
-        if (diff >= task_ctx->min_val) {
+        if (abs(diff) >= task_ctx->min_val) {
             handler(value, diff);
         }
     }

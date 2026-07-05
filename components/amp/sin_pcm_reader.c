@@ -94,8 +94,6 @@ static void amp_sine_pcm_reader_task(void *args) {
     }
 }
 
-static esp_err_t amp_sine_pcm_reader_register_events(void *args, esp_event_loop_handle_t event_bus) { return ESP_OK; }
-
 static void amp_sine_pcm_reader_set_output(void *args, ringbuf_handle_t rb) {
     amp_sine_pcm_reader_handle_t reader = args;
     reader->rb_out = rb;
@@ -105,7 +103,6 @@ static const amp_element_interface_t amp_sine_pcm_element_interface = {
     .run_task = amp_sine_pcm_reader_task,
     .set_input_rb = NULL,
     .set_output_rb = amp_sine_pcm_reader_set_output,
-    .register_events = amp_sine_pcm_reader_register_events,
 };
 
 // #####################################################################

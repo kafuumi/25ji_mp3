@@ -84,6 +84,8 @@ static inline ringbuf_handle_t rb_list_last(rb_list_t *rb) { return rb_list_at(r
 
 static inline ringbuf_handle_t rb_list_first(rb_list_t *rb) { return rb_list_at(rb, 0); }
 
+////////////////////////////////////////////////////////
+
 typedef STAILQ_HEAD(amp_el_head, amp_element) amp_element_list_head_t;
 
 struct amp_controller {
@@ -95,77 +97,6 @@ struct amp_controller {
     amp_element_list_head_t el_list;
     rb_list_t rb_list;
 };
-
-static esp_err_t inline element_task_run(amp_element_handle_t el) {
-    if (el->intf && el->intf->run_task) {
-        TaskHandle_t t;
-        BaseType_t ret;
-        if (el->affinity_core >= 0) {
-            ret = xTaskCreatePinnedToCore((el->intf->run_task), el->name, el->stack_size, (void *)el, el->task_priority,
-                                          &t, el->affinity_core);
-        } else {
-            ret = xTaskCreate((el->intf->run_task), el->name, el->stack_size, (void *)el, el->task_priority, &t);
-        }
-        if (ret == pdTRUE) {
-            el->task = t;
-            return ESP_OK;
-        }
-    }
-    return ESP_FAIL;
-}
-
-static void amp_controller_task_run(void *args) {
-    amp_controller_handle_t controller = args;
-    while (true) {
-        uint32_t notify;
-        if (xTaskNotifyWait(0, ULONG_MAX, &notify, portMAX_DELAY) != pdTRUE) {
-            // sleep to wait
-            ESP_LOGI(TAG, "controller task waiting for notify");
-            continue;
-        }
-        if (notify & NOTIFY_VALUE_MASK_EOS) {
-            ESP_LOGI(TAG, "received EOS event");
-            int count = 0;
-            amp_dashboard_handle_t dash = controller->dashboard;
-            // wait all element done
-            while (count < controller->el_size) {
-                // TODO: handle timeout
-                if (xSemaphoreTake(dash->done_count, portMAX_DELAY) == pdTRUE) {
-                    count++;
-                    ESP_LOGI(TAG, "take done count, current: %d", count);
-                }
-            }
-            // reset ringbuf
-            // TODO: do next or pause
-            ESP_LOGI(TAG, "all elements done, resetting ringbufs");
-            rb_list_t *rb_list = &controller->rb_list;
-            for (int i = 0; i < rb_list->size; ++i) {
-                rb_reset_is_done_write(rb_list->items[i]);
-            }
-            /* send eos done to element */
-            amp_element_handle_t el;
-            STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
-                xTaskNotify(el->task, NOTIFY_VALUE_MASK_EOS_DONE, eSetBits);
-            }
-        }
-    }
-}
-
-static void amp_controller_handle_report_event(void *args, esp_event_base_t base_evt, int32_t evt_id, void *evt) {
-    amp_controller_handle_t controller = args;
-    uint32_t notify = 0;
-    switch (evt_id) {
-    case AMP_EVENT_REPORT_STREAM_EOS:
-        notify = NOTIFY_VALUE_MASK_EOS;
-        break;
-    default:
-        ESP_LOGI(TAG, "unhandled report event %d, ignoring");
-        return;
-    }
-    if (notify > 0) {
-        xTaskNotify(controller->self, notify, eSetBits);
-    }
-}
 
 static inline esp_err_t amp_controller_append(amp_controller_handle_t controller, amp_element_handle_t el,
                                               const amp_element_task_config_t *cfg) {
@@ -226,16 +157,43 @@ static inline esp_err_t amp_controller_append(amp_controller_handle_t controller
     if (ESP_OK != err) {
         ESP_LOGE(TAG, "failed to append ringbuf: %s", esp_err_to_name(err));
     }
-    // setup event handler
-    if (el->intf && el->intf->register_events) {
-        err = el->intf->register_events(el, controller->event_bus);
-        if (ESP_OK != err) {
-            ESP_LOGE(TAG, "failed to register events for %s: %s", el->name, esp_err_to_name(err));
-            return err;
-        }
-        ESP_LOGI(TAG, "registered events for %s", el->name);
-    }
     return err;
+}
+
+esp_err_t amp_controller_append_reader(amp_controller_handle_t controller, amp_element_handle_t el,
+                                       const amp_element_task_config_t *cfg) {
+    el->role = AMP_ELEMENT_READER;
+    return amp_controller_append(controller, el, cfg);
+}
+
+esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_element_handle_t el,
+                                       const amp_element_task_config_t *cfg) {
+    el->role = AMP_ELEMENT_WRITER;
+    return amp_controller_append(controller, el, cfg);
+}
+
+esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, amp_element_handle_t el,
+                                          const amp_element_task_config_t *cfg) {
+    el->role = AMP_ELEMENT_PROCESSOR;
+    return amp_controller_append(controller, el, cfg);
+}
+
+static esp_err_t inline element_task_run(amp_element_handle_t el) {
+    if (el->intf && el->intf->run_task) {
+        TaskHandle_t t;
+        BaseType_t ret;
+        if (el->affinity_core >= 0) {
+            ret = xTaskCreatePinnedToCore((el->intf->run_task), el->name, el->stack_size, (void *)el, el->task_priority,
+                                          &t, el->affinity_core);
+        } else {
+            ret = xTaskCreate((el->intf->run_task), el->name, el->stack_size, (void *)el, el->task_priority, &t);
+        }
+        if (ret == pdTRUE) {
+            el->task = t;
+            return ESP_OK;
+        }
+    }
+    return ESP_FAIL;
 }
 
 static inline esp_err_t amp_controller_setup_event(amp_controller_handle_t controller) {
@@ -252,37 +210,91 @@ static inline esp_err_t amp_controller_setup_event(amp_controller_handle_t contr
         ESP_LOGE(TAG, "failed to create event loop: %s", esp_err_to_name(err));
         return err;
     }
-    // register REPORT event handler
-    err = esp_event_handler_instance_register_with(event_loop, AMP_EVENT_REPORT, ESP_EVENT_ANY_ID,
-                                                   amp_controller_handle_report_event, controller,
-                                                   &controller->report_evt);
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "failed to register report event handler: %s", esp_err_to_name(err));
-        esp_event_loop_delete(event_loop);
-        return err;
-    }
     controller->event_bus = event_loop;
     return ESP_OK;
 }
 
+static void amp_controller_task_run(void *args) {
+    amp_controller_handle_t controller = args;
+    while (true) {
+        uint32_t notify;
+        if (xTaskNotifyWait(0, ULONG_MAX, &notify, portMAX_DELAY) != pdTRUE) {
+            // sleep to wait
+            ESP_LOGI(TAG, "controller task waiting for notify");
+            continue;
+        }
+        if (notify & NOTIFY_VALUE_MASK_EOS) {
+            ESP_LOGI(TAG, "received EOS event");
+            // reset ringbuf
+            // TODO: do next or pause
+            ESP_LOGI(TAG, "all elements done, resetting ringbufs");
+            rb_list_t *rb_list = &controller->rb_list;
+            for (int i = 0; i < rb_list->size; ++i) {
+                rb_reset_is_done_write(rb_list->items[i]);
+            }
+            /* send eos done to element */
+            amp_element_handle_t el;
+            STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+                xTaskNotify(el->task, NOTIFY_VALUE_MASK_EOS_DONE, eSetBits);
+            }
+        }
+    }
+}
+
+esp_err_t amp_controller_run(amp_controller_handle_t controller) {
+    if (controller->self) {
+        ESP_LOGE(TAG, "amp controller already running");
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t err;
+    TaskHandle_t self;
+    if (xTaskCreate(amp_controller_task_run, "controller", 4096, controller, 10, &self) != pdTRUE) {
+        return ESP_FAIL;
+    }
+    controller->self = self;
+    int size = 0;
+    // start all element
+    amp_element_handle_t el;
+    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+        el->controller_task = self;
+        err = element_task_run(el);
+        if (ESP_OK != err) {
+            ESP_LOGE(TAG, "failed to create task for %s", el->name);
+            return err;
+        }
+        ESP_LOGI(TAG, "created task for %s", el->name);
+        size++;
+    }
+    if ((controller->dashboard->done_count = xSemaphoreCreateCounting(size, 0)) == NULL) {
+        return ESP_FAIL;
+    }
+    controller->el_size = size;
+    return ESP_OK;
+}
+
+////////////////////////////////////////////////////////////////////////////////////
+
+enum amp_controller_action_id {
+    AMP_CONTROLLER_ACTION_PLAY,
+    AMP_CONTROLLER_ACTION_PAUSE,
+    AMP_CONTROLLER_ACTION_RESET,
+};
+
 static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t controller,
-                                                         enum amp_event_action_id evt) {
+                                                         enum amp_controller_action_id evt) {
     // send event by task notify
     uint32_t notify = NOTIFY_VALUE_MASK_STATE;
     amp_element_handle_t el;
     enum amp_state state;
     switch (evt) {
-    case AMP_EVENT_ACTION_PAUSE:
+    case AMP_CONTROLLER_ACTION_PAUSE:
         state = AMP_STATE_PAUSE;
         break;
-    case AMP_EVENT_ACTION_PLAY:
+    case AMP_CONTROLLER_ACTION_PLAY:
         state = AMP_STATE_PLAYING;
         break;
-    case AMP_EVENT_ACTION_RESET:
+    case AMP_CONTROLLER_ACTION_RESET:
         state = AMP_STATE_READY;
-        break;
-    case AMP_EVENT_ACTION_RESUME:
-        state = AMP_STATE_PLAYING;
         break;
     default:
         return ESP_OK;
@@ -297,6 +309,37 @@ static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t
         }
     }
     return ESP_OK;
+}
+
+esp_err_t amp_controller_action_reset(amp_controller_handle_t controller) {
+    CONTROLLER_ACTION_DO(controller, AMP_STATE_READY, AMP_CONTROLLER_ACTION_RESET, TAG, "amp already READY state");
+}
+
+esp_err_t amp_controller_action_play(amp_controller_handle_t controller) {
+    CONTROLLER_ACTION_DO(controller, AMP_STATE_PLAYING, AMP_CONTROLLER_ACTION_PLAY, TAG, "amp already PLAYING state");
+}
+
+esp_err_t amp_controller_action_pause(amp_controller_handle_t controller) {
+    CONTROLLER_ACTION_DO(controller, AMP_STATE_PAUSE, AMP_CONTROLLER_ACTION_PAUSE, TAG, "amp already PAUSED state");
+}
+
+esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, bool *to_play) {
+    enum amp_state state = AMP_DASH_LOAD_STATE(controller->dashboard);
+    if (state == AMP_STATE_PAUSE || state == AMP_STATE_READY) {
+        if (to_play)
+            *to_play = true;
+        return amp_controller_action_play(controller);
+    } else if (state == AMP_STATE_PLAYING) {
+        if (to_play)
+            *to_play = false;
+        return amp_controller_action_pause(controller);
+    } else if (state == AMP_STATE_FATAL) {
+        ESP_LOGW(TAG, "state is FATAL, reset required");
+        return ESP_ERR_INVALID_STATE;
+    } else {
+        ESP_LOGW(TAG, "invalid state: %d", state);
+        return ESP_ERR_INVALID_STATE;
+    }
 }
 
 esp_err_t amp_controller_init(amp_controller_handle_t *controller) {
@@ -351,80 +394,4 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
     }
 
     amp_free(controller);
-}
-
-esp_err_t amp_controller_append_reader(amp_controller_handle_t controller, amp_element_handle_t el,
-                                       const amp_element_task_config_t *cfg) {
-    el->role = AMP_ELEMENT_READER;
-    return amp_controller_append(controller, el, cfg);
-}
-
-esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_element_handle_t el,
-                                       const amp_element_task_config_t *cfg) {
-    el->role = AMP_ELEMENT_WRITER;
-    return amp_controller_append(controller, el, cfg);
-}
-
-esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, amp_element_handle_t el,
-                                          const amp_element_task_config_t *cfg) {
-    el->role = AMP_ELEMENT_PROCESSOR;
-    return amp_controller_append(controller, el, cfg);
-}
-
-esp_err_t amp_controller_run(amp_controller_handle_t controller) {
-    amp_element_handle_t el;
-    esp_err_t err;
-    int size = 0;
-    // start all element
-    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
-        err = element_task_run(el);
-        if (ESP_OK != err) {
-            ESP_LOGE(TAG, "failed to create task for %s", el->name);
-            return err;
-        }
-        ESP_LOGI(TAG, "created task for %s", el->name);
-        size++;
-    }
-    if ((controller->dashboard->done_count = xSemaphoreCreateCounting(size, 0)) == NULL) {
-        return ESP_FAIL;
-    }
-    controller->el_size = size;
-
-    TaskHandle_t self;
-    if (xTaskCreate(amp_controller_task_run, "controller", 4096, controller, 1, &self) != pdTRUE) {
-        return ESP_FAIL;
-    }
-    controller->self = self;
-    return ESP_OK;
-}
-
-esp_err_t amp_controller_action_reset(amp_controller_handle_t controller) {
-    CONTROLLER_ACTION_DO(controller, AMP_STATE_READY, AMP_EVENT_ACTION_RESET, TAG, "amp already READY state");
-}
-
-esp_err_t amp_controller_action_play(amp_controller_handle_t controller) {
-    CONTROLLER_ACTION_DO(controller, AMP_STATE_PLAYING, AMP_EVENT_ACTION_PLAY, TAG, "amp already PLAYING state");
-}
-
-esp_err_t amp_controller_action_pause(amp_controller_handle_t controller) {
-    CONTROLLER_ACTION_DO(controller, AMP_STATE_PAUSE, AMP_EVENT_ACTION_PAUSE, TAG, "amp already PAUSED state");
-}
-
-esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, bool *to_play) {
-    enum amp_state state = AMP_DASH_LOAD_STATE(controller->dashboard);
-    if (state == AMP_STATE_PAUSE || state == AMP_STATE_READY) {
-        if (to_play)
-            *to_play = true;
-        return amp_controller_action_play(controller);
-    } else if (state == AMP_STATE_PLAYING) {
-        if (to_play)
-            *to_play = false;
-        return amp_controller_action_pause(controller);
-    } else if (state == AMP_STATE_FATAL) {
-        ESP_LOGW(TAG, "state is FATAL, reset required");
-        return ESP_ERR_INVALID_STATE;
-    } else {
-        ESP_LOGW(TAG, "invalid state: %d", state);
-        return ESP_ERR_INVALID_STATE;
-    }
 }

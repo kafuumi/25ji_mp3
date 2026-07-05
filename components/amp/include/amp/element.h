@@ -12,7 +12,6 @@ typedef struct amp_element_interface {
     void (*run_task)(void *);
     void (*set_input_rb)(void *, ringbuf_handle_t);
     void (*set_output_rb)(void *, ringbuf_handle_t);
-    esp_err_t (*register_events)(void *, esp_event_loop_handle_t);
     void (*deinit)(void *);
 } amp_element_interface_t;
 

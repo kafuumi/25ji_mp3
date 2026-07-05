@@ -29,7 +29,8 @@ void app_main() {
     bsp_init();
     bsp_audio_mute(false);
     // unity_run_menu();
-    unity_run_test_by_index(1);
+    unity_run_test_by_name("minimal player");
+    // unity_run_test_by_index(0);
     esp_vfs_fat_spiflash_unmount_rw_wl("/storage", wl_handle);
     ESP_LOGI(TAG, "test finished");
 }

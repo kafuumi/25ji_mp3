@@ -22,13 +22,17 @@ struct file_reader {
     amp_playlist_handle_t playlist;
 };
 
+typedef enum {
+    FR_STATE_PLAYING,
+    FR_STATE_WAIT_NOTIFY,
+} amp_file_reader_state_t;
+
 typedef struct {
     TickType_t event_wait_ticks;
     int cur_fd;
     amp_track_handle_t cur_track;
-    enum amp_state cached_state;
-    bool waiting_eos_done;
-    bool stop_requested;
+    amp_file_reader_state_t state;
+    bool stopped;
 } amp_file_reader_task_state_t;
 
 static void amp_file_reader_set_output(void *args, ringbuf_handle_t rb) {
@@ -36,34 +40,15 @@ static void amp_file_reader_set_output(void *args, ringbuf_handle_t rb) {
     reader->rb = rb;
 }
 
-static bool amp_file_reader_report_eos(amp_file_reader_handle_t reader) {
-    esp_err_t err = esp_event_post_to(reader->el_entry.event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_STREAM_EOS, 0, 0,
-                                      AMP_FILE_READER_POST_WAIT_TICKS);
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "failed to post EOS event: %d(%s)", err, esp_err_to_name(err));
-        return false;
-    }
-    ESP_LOGI(TAG, "posted EOS event");
-    AMP_EL_SEND_DONE(TAG, reader, el_entry);
-    return true;
-}
-
 static bool amp_file_reader_process_notify(amp_file_reader_handle_t reader, amp_file_reader_task_state_t *state) {
     uint32_t notify = 0;
     if (xTaskNotifyWait(0, ULONG_MAX, &notify, state->event_wait_ticks) == pdTRUE) {
-        if (notify & NOTIFY_VALUE_MASK_STATE) {
-            state->cached_state = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard);
-        }
-        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
-            state->waiting_eos_done = false;
+        if ((notify & NOTIFY_VALUE_MASK_STATE) || notify & NOTIFY_VALUE_MASK_EOS_DONE) {
+            enum amp_state s = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard);
+            state->state = s == AMP_STATE_PLAYING ? FR_STATE_PLAYING : FR_STATE_WAIT_NOTIFY;
         }
     }
-    bool should_wait;
-    if (state->waiting_eos_done) {
-        should_wait = true;
-    } else {
-        should_wait = state->cached_state != AMP_STATE_PLAYING;
-    }
+    bool should_wait = state->state == FR_STATE_WAIT_NOTIFY;
     if (should_wait) {
         if (state->event_wait_ticks <= 0) {
             state->event_wait_ticks = AMP_FILE_READER_EVENT_WAIT_TICKS;
@@ -94,13 +79,6 @@ static bool amp_file_reader_open_file(amp_file_reader_handle_t reader, amp_file_
     AMP_DASH_SET_MEDIA_TYPE(reader->el_entry.dashboard, track->media_type);
     state->cur_fd = fd;
     state->cur_track = track;
-
-    esp_err_t err = esp_event_post_to(reader->el_entry.event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_AUDIO_FORMAT, 0, 0,
-                                      AMP_FILE_READER_POST_WAIT_TICKS);
-    ESP_LOGI(TAG, "open new stream, post AUDIO FORMAT event");
-    if (ESP_OK != err) {
-        ESP_LOGW(TAG, "failed to post audio format event: %d(%s)", err, esp_err_to_name(err));
-    }
     return true;
 }
 
@@ -117,13 +95,13 @@ static void amp_file_reader_task(void *args) {
         .cur_fd = 0,
         .cur_track = NULL,
         .event_wait_ticks = AMP_FILE_READER_EVENT_WAIT_TICKS,
-        .cached_state = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard),
-        .waiting_eos_done = false,
-        .stop_requested = false,
+        .state = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard) == AMP_STATE_PLAYING ? FR_STATE_PLAYING
+                                                                                      : FR_STATE_WAIT_NOTIFY,
+        .stopped = false,
     };
 
     while (true) {
-        if (task_state.stop_requested) {
+        if (task_state.stopped) {
             goto _task_end;
         }
         if (amp_file_reader_process_notify(reader, &task_state)) {
@@ -139,11 +117,11 @@ static void amp_file_reader_task(void *args) {
         } else if (read_size == 0) {
             ESP_LOGI(TAG, "reached EOF: %s", task_state.cur_track->path);
             rb_done_write(rb);
-            task_state.waiting_eos_done = true;
+            task_state.state = FR_STATE_WAIT_NOTIFY;
             task_state.cur_track = NULL;
             close(task_state.cur_fd);
             task_state.cur_fd = 0;
-            amp_file_reader_report_eos(reader);
+            amp_element_notify_event((amp_element_handle_t)reader, NOTIFY_VALUE_MASK_EOS);
             continue;
         }
         ESP_LOGD(TAG, "read file %s success, size: %d", task_state.cur_track->path, read_size);
@@ -186,7 +164,6 @@ static const amp_element_interface_t amp_file_reader_element_interface = {
     .set_input_rb = NULL,
     .set_output_rb = amp_file_reader_set_output,
     .run_task = amp_file_reader_task,
-    .register_events = NULL,
 };
 
 const amp_element_interface_t *amp_file_reader_get_element_interface() { return &amp_file_reader_element_interface; }

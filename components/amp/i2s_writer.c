@@ -1,17 +1,22 @@
+#include <stdatomic.h>
 
 #include "amp/controller.h"
+#include "esp_check.h"
 #include "esp_log.h"
 
 #include "amp/amp_event.h"
 #include "amp/amp_mem.h"
 #include "amp/i2s_writer.h"
-#include "bsp.h"
 #include "element_priv.h"
 #include "utils/esp_utils.h"
 
 #define AMP_I2S_WRITER_EVENT_WAIT_TICKS pdMS_TO_TICKS(100)
 #define AMP_I2S_WRITER_READ_WAIT_TICKS pdMS_TO_TICKS(1000)
 #define AMP_I2S_WRITER_WRITE_RETRY_COUNT 3
+
+#define I2S_DEFAULT_STD_CLK (44100)
+#define I2S_DEFAULT_BIT_WIDTH I2S_DATA_BIT_WIDTH_16BIT
+#define I2S_DEFAULT_SLOT_MODE I2S_SLOT_MODE_STEREO
 
 static const char *TAG = "i2s_writer";
 
@@ -21,15 +26,20 @@ struct i2s_writer {
     i2s_port_t i2s_port;
     ringbuf_handle_t rb_in;
     i2s_chan_handle_t tx_chan;
-    uint8_t volume;
+    _Atomic uint8_t volume;
     enum amp_audio_bit_width bit_width;
 };
 
+typedef enum {
+    IW_STATE_PLAYING,
+    IW_STATE_WAIT_NOTIFY,
+} amp_i2s_writer_state_t;
+
 struct amp_i2s_writer_task_state {
-    enum amp_state cached_state;
     TickType_t event_wait_ticks;
-    bool stop_requested;
-    bool waiting_eos_done;
+    bool stopped;
+    bool new_stream;
+    amp_i2s_writer_state_t state;
 };
 
 /*
@@ -50,7 +60,7 @@ struct amp_i2s_writer_task_state {
     }
 
 static inline void amp_i2s_writer_apply_volume(amp_i2s_writer_handle_t writer, void *data, size_t size) {
-    int32_t volume = writer->volume;
+    int32_t volume = atomic_load(&writer->volume);
     if (volume == 100) {
         return;
     } else if (volume == 0) {
@@ -107,7 +117,7 @@ static esp_err_t amp_i2s_writer_write_pcm(amp_i2s_writer_handle_t writer, void *
     return ESP_OK;
 }
 
-static esp_err_t amp_i2s_writer_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s_writer_output_cfg_t *args) {
+static esp_err_t amp_i2s_writer_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s_writer_gpio_cfg_t *gpio_cfg) {
     i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(ctx->i2s_port, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
     i2s_chan_handle_t tx_chan = NULL;
@@ -117,15 +127,15 @@ static esp_err_t amp_i2s_writer_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s
         return err;
     }
     i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(args->sample_rate),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slot_bit_width, args->slot_mode),
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(I2S_DEFAULT_STD_CLK),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DEFAULT_BIT_WIDTH, I2S_DEFAULT_SLOT_MODE),
         .gpio_cfg =
             {
-                .bclk = BSP_PIN_I2S_BCK,
-                .mclk = BSP_PIN_I2S_MCK,
-                .dout = BSP_PIN_I2S_DOUT,
+                .bclk = gpio_cfg->bclk,
+                .mclk = gpio_cfg->mclk,
+                .dout = gpio_cfg->dout,
                 .din = GPIO_NUM_NC,
-                .ws = BSP_PIN_I2S_WS,
+                .ws = gpio_cfg->ws,
             },
     };
     err = i2s_channel_init_std_mode(tx_chan, &std_cfg);
@@ -133,13 +143,9 @@ static esp_err_t amp_i2s_writer_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s
         ESP_LOGE(TAG, "init i2s channel fail: " FMT_ESP_ERR(err));
         goto cleanup;
     }
-    err = i2s_channel_enable(tx_chan);
-    if (ESP_OK != err) {
-        ESP_LOGE(TAG, "enable i2s tx channel fail: " FMT_ESP_ERR(err));
-        goto cleanup;
-    }
+
     ctx->tx_chan = tx_chan;
-    ctx->chan_enable = true;
+    ctx->chan_enable = false;
     return ESP_OK;
 
 cleanup:
@@ -150,6 +156,41 @@ cleanup:
     return err;
 }
 
+static esp_err_t amp_i2s_writer_config_output_slot(amp_i2s_writer_handle_t writer) {
+    struct amp_audio_detail detail;
+    esp_err_t err =
+        amp_dashboard_load_audio_detail(writer->el_entry.dashboard, &detail, AMP_I2S_WRITER_READ_WAIT_TICKS);
+    ESP_RETURN_ON_ERROR(err, TAG, "failed to load audio detail: %d(%s)", err, esp_err_to_name(err));
+
+    i2s_chan_handle_t chan = writer->tx_chan;
+    if (writer->chan_enable) {
+        err = i2s_channel_disable(chan);
+        if (ESP_OK != err) {
+            ESP_LOGW(TAG, "failed to disable tx channel: %d(%s)", err, esp_err_to_name(err));
+        }
+    }
+
+    if (detail.sample_rate > 0) {
+        i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(detail.sample_rate);
+        err = i2s_channel_reconfig_std_clock(chan, &clk_cfg);
+        if (ESP_OK != err) {
+            return err;
+        }
+    }
+    if (detail.bit_width >= 0) {
+        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(detail.bit_width, detail.channel);
+        err = i2s_channel_reconfig_std_slot(chan, &slot_cfg);
+        if (ESP_OK != err) {
+            return err;
+        }
+    }
+    writer->bit_width = detail.bit_width;
+    if (writer->chan_enable) {
+        i2s_channel_enable(writer->tx_chan);
+    }
+    return ESP_OK;
+}
+
 static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, struct amp_i2s_writer_task_state *state) {
     uint32_t notify = 0;
     if (xTaskNotifyWait(0, ULONG_MAX, &notify, state->event_wait_ticks) == pdTRUE) {
@@ -157,68 +198,27 @@ static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, struct
         esp_err_t err;
 
         if (notify & NOTIFY_VALUE_MASK_STATE) {
-            state->cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
-            if (state->cached_state == AMP_STATE_PAUSE && writer->chan_enable) {
+            enum amp_state s = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+            if (s == AMP_STATE_PAUSE && writer->chan_enable) {
                 if ((err = i2s_channel_disable(writer->tx_chan)) != ESP_OK) {
                     ESP_LOGW(TAG, "failed to disable tx channel: %d(%s)", err, esp_err_to_name(err));
                 }
                 writer->chan_enable = false;
-            } else if (state->cached_state == AMP_STATE_PLAYING && !writer->chan_enable) {
+            } else if (s == AMP_STATE_PLAYING && !writer->chan_enable) {
                 if ((err = i2s_channel_enable(writer->tx_chan)) != ESP_OK) {
                     ESP_LOGW(TAG, "failed to enable tx channel: %d(%s)", err, esp_err_to_name(err));
                 }
                 writer->chan_enable = true;
             }
+            state->state = s == AMP_STATE_PLAYING ? IW_STATE_PLAYING : IW_STATE_WAIT_NOTIFY;
         }
-        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
-            state->waiting_eos_done = false;
-        }
-        if (notify & NOTIFY_VALUE_MASK_MEDIA_DETAIL) {
-            struct amp_audio_detail detail;
-            err = amp_dashboard_load_audio_detail(writer->el_entry.dashboard, &detail, AMP_I2S_WRITER_READ_WAIT_TICKS);
-            if (ESP_OK == err) {
-                amp_i2s_writer_output_cfg_t output = {
-                    .sample_rate = detail.sample_rate,
-                };
-                switch (detail.bit_width) {
-                case AUDIO_BIT_WIDTH_8BIT:
-                case AUDIO_BIT_WIDTH_16BIT:
-                case AUDIO_BIT_WIDTH_24BIT:
-                case AUDIO_BIT_WIDTH_32BIT:
-                    output.slot_bit_width = detail.bit_width;
-                    break;
-                default:
-                    ESP_LOGW(TAG, "bit width(%d) is not supported", detail.bit_width);
-                    break;
-                }
-                switch (detail.channel) {
-                case AUDIO_CHANNEL_MONO:
-                    output.slot_mode = I2S_SLOT_MODE_MONO;
-                    break;
-                case AUDIO_CHANNEL_STEREO:
-                    output.slot_mode = I2S_SLOT_MODE_STEREO;
-                    break;
-                default:
-                    ESP_LOGW(TAG, "channel %s is not supported", detail.channel);
-                    output.slot_mode = I2S_SLOT_MODE_STEREO;
-                    break;
-                }
-                err = amp_i2s_writer_set_output_config(writer, &output);
-                if (ESP_OK != err) {
-                    ESP_LOGW(TAG, "failed to reconfig i2s output: %d(%s)", err, esp_err_to_name(err));
-                }
-            } else {
-                ESP_LOGE(TAG, "failed to load audio detail: %d(%s)", err, esp_err_to_name(err));
-            }
-        }
-    }
-    bool should_wait;
-    if (state->waiting_eos_done) {
-        should_wait = true;
-    } else {
-        should_wait = state->cached_state != AMP_STATE_PLAYING;
-    }
 
+        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
+            enum amp_state s = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+            state->state = s == AMP_STATE_PLAYING ? IW_STATE_PLAYING : IW_STATE_WAIT_NOTIFY;
+        }
+    }
+    bool should_wait = state->state == IW_STATE_WAIT_NOTIFY;
     if (should_wait) {
         if (state->event_wait_ticks <= 0) {
             state->event_wait_ticks = AMP_I2S_WRITER_EVENT_WAIT_TICKS;
@@ -243,14 +243,15 @@ static void amp_i2s_writer_task(void *args) {
     size_t read_buf_size = 1024;
     uint8_t *read_buf = amp_malloc(sizeof(uint8_t) * read_buf_size);
     struct amp_i2s_writer_task_state task_state = {
-        .cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
+        .state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard) == AMP_STATE_PLAYING ? IW_STATE_PLAYING
+                                                                                      : IW_STATE_WAIT_NOTIFY,
         .event_wait_ticks = AMP_I2S_WRITER_EVENT_WAIT_TICKS,
-        .stop_requested = false,
-        .waiting_eos_done = false,
+        .new_stream = true,
+        .stopped = false,
     };
 
     while (true) {
-        if (task_state.stop_requested) {
+        if (task_state.stopped) {
             break;
         }
         if (amp_i2s_writer_process_notify(writer, &task_state)) {
@@ -259,8 +260,9 @@ static void amp_i2s_writer_task(void *args) {
         int data_size = rb_read(rb, (char *)read_buf, read_buf_size, AMP_I2S_WRITER_READ_WAIT_TICKS);
         if (RB_DONE == data_size) {
             ESP_LOGI(TAG, "input ringbuf done");
-            AMP_EL_SEND_DONE(TAG, writer, el_entry);
-            task_state.waiting_eos_done = true;
+            task_state.new_stream = true;
+            task_state.state = IW_STATE_WAIT_NOTIFY;
+            amp_element_notify_event((amp_element_handle_t)writer, NOTIFY_VALUE_MASK_EOS);
             continue;
         } else if (RB_ABORT == data_size) {
             ESP_LOGW(TAG, "input ringbuf aborted");
@@ -274,8 +276,16 @@ static void amp_i2s_writer_task(void *args) {
         } else {
             ESP_LOGD(TAG, "read from ringbuf: %d bytes", data_size);
         }
-
         esp_err_t err = ESP_OK;
+        if (task_state.new_stream) {
+            err = amp_i2s_writer_config_output_slot(writer);
+            if (ESP_OK == err) {
+                task_state.new_stream = false;
+            } else {
+                ESP_LOGE(TAG, "set i2s output params fail: %d", err);
+                continue;
+            }
+        }
         for (int retry = 0; retry < AMP_I2S_WRITER_WRITE_RETRY_COUNT; retry++) {
             err = amp_i2s_writer_write_pcm(writer, read_buf, data_size);
             if (ESP_OK == err) {
@@ -303,26 +313,11 @@ static void amp_i2s_writer_set_input(void *args, ringbuf_handle_t rb) {
 
 static void amp_i2s_writer_el_deinit(void *args) { amp_i2s_writer_deinit((amp_i2s_writer_handle_t)args); }
 
-static void amp_i2s_writer_audio_detail_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *evt) {
-    amp_i2s_writer_handle_t writer = args;
-    uint32_t value = NOTIFY_VALUE_MASK_MEDIA_DETAIL;
-    if (xTaskNotify(writer->el_entry.task, value, eSetBits) != pdTRUE) {
-        ESP_LOGE(TAG, "failed to notify task MEDIA DETAIL event");
-        return;
-    }
-}
-
-static esp_err_t amp_i2s_writer_register_events(void *args, esp_event_loop_handle_t evt_bus) {
-    return esp_event_handler_register_with(evt_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_AUDIO_DETAIL,
-                                           amp_i2s_writer_audio_detail_handler, args);
-}
-
 static const amp_element_interface_t amp_i2s_writer_element_interface = {
     .deinit = amp_i2s_writer_el_deinit,
     .run_task = amp_i2s_writer_task,
     .set_input_rb = amp_i2s_writer_set_input,
     .set_output_rb = NULL,
-    .register_events = amp_i2s_writer_register_events,
 };
 
 /*
@@ -338,14 +333,12 @@ esp_err_t amp_i2s_writer_init(amp_i2s_writer_cfg_t *cfg, amp_i2s_writer_handle_t
     }
     w->i2s_port = cfg->i2s_port;
     w->volume = cfg->volume;
-
-    amp_i2s_writer_output_cfg_t args = AMP_I2S_WRITER_DEFAULT_OUTPUT_CONFIG();
-    w->bit_width = args.slot_bit_width;
-    esp_err_t err = amp_i2s_writer_driver_init(w, &args);
+    esp_err_t err = amp_i2s_writer_driver_init(w, &cfg->gpio_cfg);
     if (ESP_OK != err) {
         amp_free(w);
         return err;
     }
+    w->bit_width = I2S_DEFAULT_BIT_WIDTH;
     *writer = w;
     ESP_LOGD(TAG, "initialized i2s writer");
     return ESP_OK;
@@ -372,34 +365,8 @@ void amp_i2s_writer_deinit(amp_i2s_writer_handle_t writer) {
     amp_free(writer);
 }
 
-esp_err_t amp_i2s_writer_set_output_config(amp_i2s_writer_handle_t writer, amp_i2s_writer_output_cfg_t *args) {
-    i2s_chan_handle_t chan = writer->tx_chan;
-    esp_err_t err = ESP_OK;
-    if (writer->chan_enable) {
-        err = i2s_channel_disable(chan);
-        if (ESP_OK != err) {
-            ESP_LOGW(TAG, "failed to disable tx channel: %d(%s)", err, esp_err_to_name(err));
-        }
-    }
-
-    if (args->sample_rate > 0) {
-        i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(args->sample_rate);
-        err = i2s_channel_reconfig_std_clock(chan, &clk_cfg);
-        if (ESP_OK != err) {
-            return err;
-        }
-    }
-    if (args->slot_bit_width >= 0) {
-        i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(args->slot_bit_width, args->slot_mode);
-        err = i2s_channel_reconfig_std_slot(chan, &slot_cfg);
-        if (ESP_OK != err) {
-            return err;
-        }
-    }
-    if (writer->chan_enable) {
-        i2s_channel_enable(writer->tx_chan);
-    }
-    return ESP_OK;
-}
-
 const amp_element_interface_t *amp_i2s_writer_get_element_interface(void) { return &amp_i2s_writer_element_interface; }
+
+void amp_i2s_writer_set_volume(amp_i2s_writer_handle_t writer, uint8_t volume) {
+    atomic_store(&writer->volume, volume);
+}

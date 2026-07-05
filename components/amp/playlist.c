@@ -128,17 +128,19 @@ amp_track_handle_t amp_playlist_next(amp_playlist_handle_t playlist) {
         if (amp_playlist_load(playlist, NULL) != ESP_OK) {
             return NULL;
         }
+        playlist->is_load = true;
     }
     if (playlist->cur == NULL) {
         // empty
         return NULL;
     }
-    playlist->cur = TAILQ_NEXT(playlist->cur, tailq_entry);
+    struct amp_track_node_t *cur = playlist->cur;
+    playlist->cur = TAILQ_NEXT(cur, tailq_entry);
     if (playlist->cur == NULL) {
         // end
         playlist->cur = TAILQ_FIRST(&playlist->track_list);
     }
-    return &(playlist->cur->track);
+    return &cur->track;
 }
 
 esp_err_t amp_playlist_init(amp_playlist_cfg_t *cfg, amp_playlist_handle_t *playlist) {

@@ -20,14 +20,6 @@
 #define AMP_TASK_CPU_CORE PRO_CPU_NUM
 #define AMP_TASK_DEFAULT_PRIORITY 15
 
-#define DEFAULT_ELEMENT_TASK_CFG()                                                                                     \
-    {                                                                                                                  \
-        .output_rb_size = 1024,                                                                                        \
-        .stack_size = 4096,                                                                                            \
-        .affinity_core = AMP_TASK_CPU_CORE,                                                                            \
-        .task_priority = AMP_TASK_DEFAULT_PRIORITY,                                                                    \
-    }
-
 static const char *TAG = "app";
 
 static amp_controller_handle_t g_amp_controller = NULL;
@@ -37,6 +29,14 @@ static bool g_flag_playing = false;
 static button_handle_t *g_button_list = NULL;
 
 //////////////////////////////////////////////////////////////////////
+
+#define DEFAULT_ELEMENT_TASK_CFG()                                                                                     \
+    {                                                                                                                  \
+        .output_rb_size = 1024,                                                                                        \
+        .stack_size = 4096,                                                                                            \
+        .affinity_core = AMP_TASK_CPU_CORE,                                                                            \
+        .task_priority = AMP_TASK_DEFAULT_PRIORITY,                                                                    \
+    }
 
 static esp_err_t amp_player_init() {
     // set to mute
@@ -70,6 +70,13 @@ static esp_err_t amp_player_init() {
     amp_i2s_writer_cfg_t iw_cfg = {
         .i2s_port = I2S_NUM_0,
         .volume = 50,
+        .gpio_cfg =
+            {
+                .bclk = BSP_PIN_I2S_BCK,
+                .mclk = BSP_PIN_I2S_MCK,
+                .dout = BSP_PIN_I2S_DOUT,
+                .ws = BSP_PIN_I2S_WS,
+            },
     };
     err = amp_i2s_writer_init(&iw_cfg, &i2s_writer);
     ESP_RETURN_ON_ERROR(err, TAG, "create amp i2s writer fail: %d", err);
@@ -225,7 +232,7 @@ static esp_err_t button_init() {
     ESP_GOTO_ON_ERROR(iot_button_register_cb(any_btn, BUTTON_SINGLE_CLICK, NULL, any_btn_single_click_cb, NULL),
                       _cleanup, TAG, "any btn register SINGLE_CLICK event fail: %d", ret);
 
-    ESP_GOTO_ON_ERROR(bsp_btn_plustor_registor_cb(handle_volume_change_event, 10, 3000), _cleanup, TAG,
+    ESP_GOTO_ON_ERROR(bsp_btn_plustor_registor_cb(handle_volume_change_event, 40, 50), _cleanup, TAG,
                       "register plustor button event fail: %d", ret);
 
     return ESP_OK;
@@ -253,6 +260,6 @@ void app_main(void) {
     }
     g_sensor_task = sensor_task;
 
-    start_print_heap_task();
+    // start_print_heap_task();
     ESP_LOGI(TAG, "app start finished, enjoy!");
 }

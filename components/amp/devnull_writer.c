@@ -75,7 +75,7 @@ static void amp_devnull_writer_task(void *args) {
         if (RB_DONE == consumed) {
             if (!task_state.waiting_eos_done) {
                 ESP_LOGI(TAG, "input ringbuf done");
-                AMP_EL_SEND_DONE(TAG, writer, el_entry);
+
                 task_state.waiting_eos_done = true;
                 vTaskDelay(pdMS_TO_TICKS(100));
             }
@@ -111,7 +111,6 @@ static const amp_element_interface_t amp_devnull_writer_element_interface = {
     .run_task = amp_devnull_writer_task,
     .set_input_rb = amp_devnull_writer_set_input,
     .set_output_rb = NULL,
-    .register_events = NULL,
 };
 
 esp_err_t amp_devnull_writer_init(amp_devnull_writer_handle_t *writer) {

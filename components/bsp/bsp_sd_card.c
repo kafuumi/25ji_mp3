@@ -168,7 +168,7 @@ _cleanup:
 
 static esp_err_t bsp_sd_card_sdmmc_mount(const esp_vfs_fat_mount_config_t *mount_cfg, const char *mount_path) {
     sdmmc_host_t host_cfg = SDMMC_HOST_DEFAULT();
-    host_cfg.max_freq_khz = SDMMC_FREQ_HIGHSPEED; // 40 MHz
+    host_cfg.max_freq_khz = SDMMC_FREQ_DEFAULT; // 20 MHz
     host_cfg.slot = SD_CARD_SDMMC_SLOT;
 
     sdmmc_slot_config_t slot_cfg = SDMMC_SLOT_CONFIG_DEFAULT();
@@ -239,7 +239,7 @@ esp_err_t bsp_sd_card_mount() {
     sd_card_ctx->sdspi_dev = -1;
 
     esp_err_t err;
-    err = bsp_sd_card_sdmmc_mount(&mount_cfg, mount_path);
+    err = bsp_sd_card_sdspi_mount(&mount_cfg, mount_path);
     ESP_RETURN_ON_ERROR(err, TAG, "mount sd card to %s fail: %d(%s)", mount_path, err, esp_err_to_name(err));
 
     ESP_LOGI(TAG, "mount sd card on %s successful, card info:", mount_path);

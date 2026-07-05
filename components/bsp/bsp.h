@@ -42,6 +42,6 @@ esp_err_t bsp_init();
 
 esp_err_t bsp_audio_mute(bool mute);
 
-esp_err_t bsp_btn_plustor_registor_cb(volume_change_handler cb, int min_val, int internal);
+esp_err_t bsp_btn_plustor_register_cb(volume_change_handler cb, int min_val, int interval);
 
 #endif // _BSP_H_

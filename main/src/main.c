@@ -22,7 +22,15 @@
 
 static const char *TAG = "app";
 
-static amp_controller_handle_t g_amp_controller = NULL;
+typedef struct {
+    amp_controller_handle_t controller;
+    amp_playlist_handle_t playlist;
+    amp_file_reader_handle_t file_reader;
+    amp_audio_decoder_handle_t audio_codec;
+    amp_i2s_writer_handle_t i2s_writer;
+} amp_player_ctx_t;
+
+static amp_player_ctx_t *g_amp_player = NULL;
 static i2c_master_bus_handle_t g_i2c_bus = NULL;
 static TaskHandle_t g_sensor_task = NULL;
 static bool g_flag_playing = false;
@@ -41,10 +49,14 @@ static button_handle_t *g_button_list = NULL;
 static esp_err_t amp_player_init() {
     // set to mute
     bsp_audio_mute(true);
-    if (g_amp_controller) {
+    if (g_amp_player) {
         return ESP_OK;
     }
 
+    amp_player_ctx_t *player = malloc(sizeof(amp_player_ctx_t));
+    if (!player) {
+        return ESP_ERR_NO_MEM;
+    }
     esp_err_t err;
 
     amp_playlist_handle_t playlist;
@@ -104,7 +116,13 @@ static esp_err_t amp_player_init() {
     err = amp_controller_run(controller);
     ESP_RETURN_ON_ERROR(err, TAG, "run amp element fail: %d", err);
 
-    g_amp_controller = controller;
+    player->controller = controller;
+    player->playlist = playlist;
+    player->file_reader = file_reader;
+    player->audio_codec = decoder;
+    player->i2s_writer = i2s_writer;
+
+    g_amp_player = player;
     return ESP_OK;
 }
 
@@ -167,16 +185,19 @@ static void sensor_read_task(void *args) {
 
 static void handle_volume_change_event(int volume, int diff) {
     ESP_LOGI(TAG, "volume changed, current: %d, diff: %d", volume, diff);
+    if (g_amp_player) {
+        amp_i2s_writer_set_volume(g_amp_player->i2s_writer, volume);
+    }
 }
 
 static void any_btn_single_click_cb(void *args, void *user_data) {
     ESP_LOGI(TAG, "any button clicked");
     if (g_flag_playing) {
         bsp_audio_mute(true);
-        amp_controller_action_pause(g_amp_controller);
+        amp_controller_action_pause(g_amp_player->controller);
     } else {
         bsp_audio_mute(false);
-        amp_controller_action_play(g_amp_controller);
+        amp_controller_action_play(g_amp_player->controller);
     }
     g_flag_playing = !g_flag_playing;
 }
@@ -232,7 +253,7 @@ static esp_err_t button_init() {
     ESP_GOTO_ON_ERROR(iot_button_register_cb(any_btn, BUTTON_SINGLE_CLICK, NULL, any_btn_single_click_cb, NULL),
                       _cleanup, TAG, "any btn register SINGLE_CLICK event fail: %d", ret);
 
-    ESP_GOTO_ON_ERROR(bsp_btn_plustor_registor_cb(handle_volume_change_event, 40, 50), _cleanup, TAG,
+    ESP_GOTO_ON_ERROR(bsp_btn_plustor_register_cb(handle_volume_change_event, 2, 50), _cleanup, TAG,
                       "register plustor button event fail: %d", ret);
 
     return ESP_OK;

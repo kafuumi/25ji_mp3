@@ -27,4 +27,6 @@ void amp_i2s_writer_deinit(amp_i2s_writer_handle_t writer);
 
 const amp_element_interface_t *amp_i2s_writer_get_element_interface(void);
 
+void amp_i2s_writer_set_volume(amp_i2s_writer_handle_t writer, uint8_t volume);
+
 #endif // _AMP_I2S_WRITER_H_

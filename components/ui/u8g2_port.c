@@ -9,6 +9,8 @@
 
 #include "u8g2_port.h"
 
+#define U8G2_SETUP_I2C u8g2_Setup_sh1106_i2c_128x64_noname_f
+
 #define WAIT_TIME 100 // 100 ms
 #define BUF_SIZE 32
 
@@ -118,17 +120,17 @@ esp_err_t u8g2_port_init(const u8g2_port_i2c_config_t *cfg, u8g2_t *u8g2) {
     ESP_LOGI(TAG, "start setup u8g2 hardware, set rotation to %d", cfg->rotation);
     switch (cfg->rotation) {
     case ROTATION_90:
-        u8g2_Setup_sh1106_i2c_128x64_noname_f(u8g2, U8G2_R1, u8x8_byte_hw_i2c, gpio_and_delay_cb);
+        U8G2_SETUP_I2C(u8g2, U8G2_R1, u8x8_byte_hw_i2c, gpio_and_delay_cb);
         break;
     case ROTATION_180:
-        u8g2_Setup_sh1106_i2c_128x64_noname_f(u8g2, U8G2_R2, u8x8_byte_hw_i2c, gpio_and_delay_cb);
+        U8G2_SETUP_I2C(u8g2, U8G2_R2, u8x8_byte_hw_i2c, gpio_and_delay_cb);
         break;
     case ROTATION_270:
-        u8g2_Setup_sh1106_i2c_128x64_noname_f(u8g2, U8G2_R3, u8x8_byte_hw_i2c, gpio_and_delay_cb);
+        U8G2_SETUP_I2C(u8g2, U8G2_R3, u8x8_byte_hw_i2c, gpio_and_delay_cb);
         break;
     case ROTATION_0:
     default:
-        u8g2_Setup_sh1106_i2c_128x64_noname_f(u8g2, U8G2_R0, u8x8_byte_hw_i2c, gpio_and_delay_cb);
+        U8G2_SETUP_I2C(u8g2, U8G2_R0, u8x8_byte_hw_i2c, gpio_and_delay_cb);
         break;
     }
 

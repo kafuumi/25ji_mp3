@@ -190,6 +190,10 @@ static void handle_volume_change_event(int volume, int diff) {
     }
 }
 
+static void next_btn_single_click_cb(void *args, void *user_data) { ui_post_input(UI_INPUT_NEXT); }
+
+static void prev_btn_single_click_cb(void *args, void *user_data) { ui_post_input(UI_INPUT_PREV); }
+
 static void any_btn_single_click_cb(void *args, void *user_data) {
     ESP_LOGI(TAG, "any button clicked");
     if (g_flag_playing) {
@@ -252,6 +256,10 @@ static esp_err_t button_init() {
 
     ESP_GOTO_ON_ERROR(iot_button_register_cb(any_btn, BUTTON_SINGLE_CLICK, NULL, any_btn_single_click_cb, NULL),
                       _cleanup, TAG, "any btn register SINGLE_CLICK event fail: %d", ret);
+    ESP_GOTO_ON_ERROR(iot_button_register_cb(prev_btn, BUTTON_SINGLE_CLICK, NULL, prev_btn_single_click_cb, NULL),
+                      _cleanup, TAG, "prev btn register SINGLE_CLICK event fail: %d", ret);
+    ESP_GOTO_ON_ERROR(iot_button_register_cb(next_btn, BUTTON_SINGLE_CLICK, NULL, next_btn_single_click_cb, NULL),
+                      _cleanup, TAG, "next btn register SINGLE_CLICK event fail: %d", ret);
 
     ESP_GOTO_ON_ERROR(bsp_btn_plustor_register_cb(handle_volume_change_event, 2, 50), _cleanup, TAG,
                       "register plustor button event fail: %d", ret);
@@ -271,6 +279,14 @@ void app_main(void) {
     ESP_ERROR_CHECK(button_init());
     ESP_ERROR_CHECK(aht20_init(g_i2c_bus));
 
+    ui_cfg_t ui_cfg = {
+        .task_cpu_num = APP_CPU_NUM,
+        .task_name = "ui_draw",
+        .task_priority = 5,
+        .task_size = 4096,
+    };
+    ESP_ERROR_CHECK(ui_start(&ui_cfg));
+
     BaseType_t ret;
     TaskHandle_t sensor_task;
     ret = xTaskCreatePinnedToCore(sensor_read_task, "sensor", SENSOR_AHT20_TASK_SIZE, NULL, SENSOR_AHT20_TASK_PRIORITY,
@@ -280,7 +296,6 @@ void app_main(void) {
         abort();
     }
     g_sensor_task = sensor_task;
-
     // start_print_heap_task();
     ESP_LOGI(TAG, "app start finished, enjoy!");
 }

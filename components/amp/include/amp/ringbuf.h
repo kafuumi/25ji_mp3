@@ -180,52 +180,15 @@ esp_err_t rb_done_write(ringbuf_handle_t rb);
 esp_err_t rb_unblock_reader(ringbuf_handle_t rb);
 
 /**
- * @brief      Set the owner of the 'rb_read'.
+ * @brief Unlock from rb_write
  *
- * @param[in]  rb     The Ringbuffer handle
- * @param[in]  holder The owner of the 'rb_read'
- *
- * @return
- *     - ESP_OK
- *     - ESP_FAIL
- */
-esp_err_t rb_set_reader_holder(ringbuf_handle_t rb, void *holder);
-
-/**
- * @brief      Get the owner of the 'rb_read'.
- *
- * @param[in]   rb     The Ringbuffer handle
- * @param[out]  holder The owner of the 'rb_read'
+ * @param[in]  rb   The Ringbuffer handle
  *
  * @return
  *     - ESP_OK
- *     - ESP_FAIL
+ *     - ESP_ERR_INVALID_ARG
  */
-esp_err_t rb_get_reader_holder(ringbuf_handle_t rb, void **holder);
-
-/**
- * @brief      Set the owner of the 'rb_write'.
- *
- * @param[in]  rb     The Ringbuffer handle
- * @param[in]  holder The owner of the 'rb_write'
- *
- * @return
- *     - ESP_OK
- *     - ESP_FAIL
- */
-esp_err_t rb_set_writer_holder(ringbuf_handle_t rb, void *holder);
-
-/**
- * @brief      Get the owner of the 'rb_write'.
- *
- * @param[in]   rb     The Ringbuffer handle
- * @param[out]  holder The owner of the 'rb_write'
- *
- * @return
- *     - ESP_OK
- *     - ESP_FAIL
- */
-esp_err_t rb_get_writer_holder(ringbuf_handle_t rb, void **holder);
+esp_err_t rb_unblock_writer(ringbuf_handle_t rb);
 
 #ifdef __cplusplus
 }

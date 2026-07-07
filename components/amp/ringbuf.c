@@ -48,8 +48,7 @@ struct ringbuf {
     bool abort_write;
     bool is_done_write;       /**< To signal that we are done writing */
     bool unblock_reader_flag; /**< To unblock instantly from rb_read */
-    void *reader_holder;
-    void *writer_holder;
+    bool unblock_writer_flag; /**< To unblock instantly from rb_write */
 };
 
 static esp_err_t rb_abort_read(ringbuf_handle_t rb);
@@ -282,6 +281,11 @@ int rb_write(ringbuf_handle_t rb, char *buf, int buf_len, TickType_t ticks_to_wa
                 rb_release(rb->lock);
                 goto write_err;
             }
+            if (rb->unblock_writer_flag) {
+                ret_val = RB_TIMEOUT;
+                rb_release(rb->lock);
+                goto write_err;
+            }
 
             rb_release(rb->lock);
             rb_release(rb->can_read);
@@ -326,6 +330,7 @@ write_err:
     if ((ret_val == RB_FAIL) || (ret_val == RB_ABORT)) {
         total_write_size = ret_val;
     }
+    rb->unblock_writer_flag = false;
     return total_write_size > 0 ? total_write_size : ret_val;
 }
 
@@ -381,6 +386,15 @@ esp_err_t rb_unblock_reader(ringbuf_handle_t rb) {
     return ESP_OK;
 }
 
+esp_err_t rb_unblock_writer(ringbuf_handle_t rb) {
+    if (rb == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    rb->unblock_writer_flag = true;
+    rb_release(rb->can_read);
+    return ESP_OK;
+}
+
 bool rb_is_done_write(ringbuf_handle_t rb) {
     if (rb == NULL) {
         return false;
@@ -393,36 +407,4 @@ int rb_get_size(ringbuf_handle_t rb) {
         return ESP_ERR_INVALID_ARG;
     }
     return rb->size;
-}
-
-esp_err_t rb_set_reader_holder(ringbuf_handle_t rb, void *holder) {
-    if (rb == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    rb->reader_holder = holder;
-    return ESP_OK;
-}
-
-esp_err_t rb_get_reader_holder(ringbuf_handle_t rb, void **holder) {
-    if ((rb == NULL) || (holder == NULL)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    *holder = rb->reader_holder;
-    return ESP_OK;
-}
-
-esp_err_t rb_set_writer_holder(ringbuf_handle_t rb, void *holder) {
-    if (rb == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    rb->writer_holder = holder;
-    return ESP_OK;
-}
-
-esp_err_t rb_get_writer_holder(ringbuf_handle_t rb, void **holder) {
-    if ((rb == NULL) || (holder == NULL)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    *holder = rb->writer_holder;
-    return ESP_OK;
 }

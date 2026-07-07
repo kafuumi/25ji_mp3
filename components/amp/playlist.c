@@ -123,12 +123,33 @@ static esp_err_t amp_playlist_load(amp_playlist_handle_t playlist, const char *d
     return err;
 }
 
-amp_track_handle_t amp_playlist_next(amp_playlist_handle_t playlist) {
+esp_err_t amp_playlist_preload(amp_playlist_handle_t playlist) {
     if (!playlist->is_load) {
-        if (amp_playlist_load(playlist, NULL) != ESP_OK) {
-            return NULL;
+        esp_err_t err = amp_playlist_load(playlist, NULL);
+        if (err != ESP_OK) {
+            return err;
         }
         playlist->is_load = true;
+    }
+    return ESP_OK;
+}
+
+amp_track_handle_t amp_playlist_get_current(amp_playlist_handle_t playlist) {
+    esp_err_t err;
+    if ((err = amp_playlist_preload(playlist)) != ESP_OK) {
+        return NULL;
+    }
+    if (playlist->cur == NULL) {
+        // empty
+        return NULL;
+    }
+    return &playlist->cur->track;
+}
+
+amp_track_handle_t amp_playlist_next(amp_playlist_handle_t playlist) {
+    esp_err_t err;
+    if ((err = amp_playlist_preload(playlist)) != ESP_OK) {
+        return NULL;
     }
     if (playlist->cur == NULL) {
         // empty

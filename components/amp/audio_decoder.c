@@ -123,10 +123,12 @@ struct amp_audio_decoder_task_state {
 static bool amp_audio_decoder_process_notify(amp_audio_decoder_handle_t codec,
                                              struct amp_audio_decoder_task_state *task_state) {
     uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, task_state->event_wait_ticks) == pdTRUE) {
-        if ((notify & NOTIFY_VALUE_MASK_STATE) || (notify & NOTIFY_VALUE_MASK_EOS_DONE)) {
-            enum amp_state s = AMP_DASH_LOAD_STATE(codec->el_entry.dashboard);
-            task_state->state = s == AMP_STATE_PLAYING ? AD_STATE_PLAYING : AD_STATE_WAIT_NOTIFY;
+    EL_WAIT_NOTIFY(notify, task_state->event_wait_ticks) {
+        task_state->state = AMP_DASH_IS_PLAYING(codec->el_entry.dashboard) ? AD_STATE_PLAYING : AD_STATE_WAIT_NOTIFY;
+        EL_NOTIFY_ON_STREAM_NEW(notify) {
+            ESP_LOGI(TAG, "receive STREAM NEW notify");
+            task_state->new_stream = true;
+            task_state->first_dec = true;
         }
     }
     bool should_wait = task_state->state == AD_STATE_WAIT_NOTIFY;
@@ -167,8 +169,7 @@ static void amp_audio_decoder_task_run(void *args) {
     esp_err_t err;
     int fail_counter = 0;
     struct amp_audio_decoder_task_state task_state = {
-        .state = AMP_DASH_LOAD_STATE(codec->el_entry.dashboard) == AMP_STATE_PLAYING ? AD_STATE_PLAYING
-                                                                                     : AD_STATE_WAIT_NOTIFY,
+        .state = AMP_DASH_IS_PLAYING(codec->el_entry.dashboard) ? AD_STATE_PLAYING : AD_STATE_WAIT_NOTIFY,
         .event_wait_ticks = AMP_AUDIO_DECODER_EVENT_WAIT_TICKS,
         .stopped = false,
         .first_dec = true,
@@ -202,6 +203,7 @@ _read_loop:
             // abort data
             task_state.new_stream = true;
             task_state.first_dec = true;
+            task_state.state = AD_STATE_WAIT_NOTIFY;
             continue;
         } else if (RB_TIMEOUT == in_size) {
             ESP_LOGW(TAG, "read input ringbuf timeout");
@@ -286,6 +288,7 @@ _read_loop:
                     if (try_count < 3) {
                         goto _try_write;
                     }
+                    goto _read_loop;
                 } else if (write_size <= 0) {
                     ESP_LOGW(TAG, "write to output ringbuf failed");
                     fail_counter++;
@@ -301,7 +304,7 @@ _read_loop:
             if (raw_dec.eos) {
                 /* end of stream, set done flag */
                 rb_done_write(rb_out);
-                amp_element_notify_event((amp_element_handle_t)codec, NOTIFY_VALUE_MASK_EOS);
+                amp_element_notify_event((amp_element_handle_t)codec, NOTIFY_VALUE_MASK_STREAM_END);
                 goto _read_loop;
             }
         }

@@ -1,5 +1,7 @@
 #include <assert.h>
 
+#include "amp/element.h"
+#include "dashboard.h"
 #include "esp_err.h"
 #include "esp_log.h"
 
@@ -147,7 +149,7 @@ static inline esp_err_t amp_controller_append(amp_controller_handle_t controller
         break;
     default:
         ESP_LOGE(TAG, "invalid element role: %d", el->role);
-        exit(1);
+        abort();
     }
     STAILQ_INSERT_TAIL(&(controller->el_list), el, stailq_entry);
     esp_err_t err = ESP_OK;
@@ -223,10 +225,9 @@ static void amp_controller_task_run(void *args) {
             ESP_LOGI(TAG, "controller task waiting for notify");
             continue;
         }
-        if (notify & NOTIFY_VALUE_MASK_EOS) {
-            ESP_LOGI(TAG, "received EOS event");
+        EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STREAM_END) {
+            ESP_LOGI(TAG, "received STREAM END event");
             // reset ringbuf
-            // TODO: do next or pause
             ESP_LOGI(TAG, "all elements done, resetting ringbufs");
             rb_list_t *rb_list = &controller->rb_list;
             for (int i = 0; i < rb_list->size; ++i) {
@@ -235,7 +236,21 @@ static void amp_controller_task_run(void *args) {
             /* send eos done to element */
             amp_element_handle_t el;
             STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
-                xTaskNotify(el->task, NOTIFY_VALUE_MASK_EOS_DONE, eSetBits);
+                xTaskNotify(el->task, NOTIFY_VALUE_MASK_STREAM_NEW, eSetBits);
+            }
+        }
+        EL_NOTIFY_ON_STREAM_ABORT(notify) {
+            ESP_LOGI(TAG, "received STREAM ABORT event");
+            // reset ringbuf
+            ESP_LOGI(TAG, "all elements done, resetting ringbufs");
+            rb_list_t *rb_list = &controller->rb_list;
+            for (int i = 0; i < rb_list->size; ++i) {
+                rb_reset(rb_list->items[i]);
+            }
+            /* send STREAM NEW to element */
+            amp_element_handle_t el;
+            STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+                xTaskNotify(el->task, NOTIFY_VALUE_MASK_STREAM_NEW, eSetBits);
             }
         }
     }
@@ -278,15 +293,28 @@ enum amp_controller_action_id {
     AMP_CONTROLLER_ACTION_PLAY,
     AMP_CONTROLLER_ACTION_PAUSE,
     AMP_CONTROLLER_ACTION_RESET,
+    AMP_CONTROLLER_ACTION_NEXT,
+    AMP_CONTROLLER_ACTION_PREV,
 };
+
+static inline void amp_controller_send_notify(amp_controller_handle_t controller, uint32_t notify) {
+    amp_element_handle_t el;
+    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+        if (el && el->task) {
+            if (xTaskNotify(el->task, notify, eSetBits) != pdTRUE) {
+                ESP_LOGW(TAG, "failed to notify %s of state change", el->name);
+            }
+        }
+    }
+}
 
 static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t controller,
                                                          enum amp_controller_action_id evt) {
     // send event by task notify
-    uint32_t notify = NOTIFY_VALUE_MASK_STATE;
-    amp_element_handle_t el;
     enum amp_state state;
     switch (evt) {
+    case AMP_CONTROLLER_ACTION_NEXT:
+    case AMP_CONTROLLER_ACTION_PREV:
     case AMP_CONTROLLER_ACTION_PAUSE:
         state = AMP_STATE_PAUSE;
         break;
@@ -301,11 +329,24 @@ static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t
     }
     AMP_DASH_SWAP_STATE(controller->dashboard, state);
 
-    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
-        if (el && el->task) {
-            if (xTaskNotify(el->task, notify, eSetBits) != pdTRUE) {
+    amp_controller_send_notify(controller, NOTIFY_VALUE_MASK_STATE);
+    return ESP_OK;
+}
+
+esp_err_t amp_controller_action_next(amp_controller_handle_t controller) {
+    amp_element_handle_t el;
+    STAILQ_FOREACH(el, &(controller->el_list), stailq_entry) {
+        if (el && el->role == AMP_ELEMENT_READER) {
+            if (xTaskNotify(el->task, NOTIFY_VALUE_MASK_STREAM_ABORT, eSetBits) != pdTRUE) {
                 ESP_LOGW(TAG, "failed to notify %s of state change", el->name);
             }
+        }
+    }
+    // abort all
+    for (size_t i = 0; i < (controller->rb_list).size; ++i) {
+        ringbuf_handle_t rb = controller->rb_list.items[i];
+        if (rb) {
+            rb_abort(rb);
         }
     }
     return ESP_OK;
@@ -321,6 +362,13 @@ esp_err_t amp_controller_action_play(amp_controller_handle_t controller) {
 
 esp_err_t amp_controller_action_pause(amp_controller_handle_t controller) {
     CONTROLLER_ACTION_DO(controller, AMP_STATE_PAUSE, AMP_CONTROLLER_ACTION_PAUSE, TAG, "amp already PAUSED state");
+    // unblock write
+    for (size_t i = 0; i < (controller->rb_list).size; ++i) {
+        ringbuf_handle_t rb = controller->rb_list.items[i];
+        if (rb) {
+            rb_unblock_writer(rb);
+        }
+    }
 }
 
 esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, bool *to_play) {

@@ -6,6 +6,7 @@
 #include "amp/amp_event.h"
 #include "amp/amp_mem.h"
 #include "amp/file_reader.h"
+#include "dashboard.h"
 #include "element_priv.h"
 #include "esp_log.h"
 
@@ -42,12 +43,30 @@ static void amp_file_reader_set_output(void *args, ringbuf_handle_t rb) {
 
 static bool amp_file_reader_process_notify(amp_file_reader_handle_t reader, amp_file_reader_task_state_t *state) {
     uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, state->event_wait_ticks) == pdTRUE) {
-        if ((notify & NOTIFY_VALUE_MASK_STATE) || notify & NOTIFY_VALUE_MASK_EOS_DONE) {
-            enum amp_state s = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard);
-            state->state = s == AMP_STATE_PLAYING ? FR_STATE_PLAYING : FR_STATE_WAIT_NOTIFY;
+    EL_WAIT_NOTIFY(notify, state->event_wait_ticks) {
+        EL_NOTIFY_ON_STATE(notify) {
+            state->state = AMP_DASH_IS_PLAYING(reader->el_entry.dashboard) ? FR_STATE_PLAYING : FR_STATE_WAIT_NOTIFY;
+        }
+        EL_NOTIFY_ON_STREAM_NEW(notify) {
+            ESP_LOGI(TAG, "receive STREAM NEW notify");
+            state->state = AMP_DASH_IS_PLAYING(reader->el_entry.dashboard) ? FR_STATE_PLAYING : FR_STATE_WAIT_NOTIFY;
+            if (state->cur_fd != 0) {
+                close(state->cur_fd);
+                state->cur_fd = 0;
+                state->cur_track = NULL;
+            }
+        }
+        EL_NOTIFY_ON_STREAM_ABORT(notify) {
+            ESP_LOGI(TAG, "receive STREAM ABORT notify");
+            if (state->cur_fd != 0) {
+                close(state->cur_fd);
+                state->cur_fd = 0;
+                state->cur_track = NULL;
+            }
+            state->state = FR_STATE_WAIT_NOTIFY;
         }
     }
+
     bool should_wait = state->state == FR_STATE_WAIT_NOTIFY;
     if (should_wait) {
         if (state->event_wait_ticks <= 0) {
@@ -89,7 +108,6 @@ static void amp_file_reader_task(void *args) {
 
     size_t buf_size = 1024;
     uint8_t *buf = amp_malloc(sizeof(uint8_t) * buf_size);
-    TickType_t write_wait_ticks = pdMS_TO_TICKS(1000);
 
     amp_file_reader_task_state_t task_state = {
         .cur_fd = 0,
@@ -121,7 +139,7 @@ static void amp_file_reader_task(void *args) {
             task_state.cur_track = NULL;
             close(task_state.cur_fd);
             task_state.cur_fd = 0;
-            amp_element_notify_event((amp_element_handle_t)reader, NOTIFY_VALUE_MASK_EOS);
+            amp_element_notify_event((amp_element_handle_t)reader, NOTIFY_VALUE_MASK_STREAM_END);
             continue;
         }
         ESP_LOGD(TAG, "read file %s success, size: %d", task_state.cur_track->path, read_size);
@@ -129,7 +147,7 @@ static void amp_file_reader_task(void *args) {
         int write_size;
         int retry = 0;
     _retry_write:
-        write_size = rb_write(rb, (char *)buf, read_size, write_wait_ticks);
+        write_size = rb_write(rb, (char *)buf, read_size, AMP_FILE_READER_WRITE_WAIT_TICKS);
         if (RB_DONE == write_size) {
             ESP_LOGW(TAG, "output ringbuf done write");
         } else if (RB_ABORT == write_size) {

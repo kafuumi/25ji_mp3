@@ -2,8 +2,11 @@
 #include "amp/devnull_writer.h"
 
 #include "amp/amp_mem.h"
+#include "amp/element.h"
+#include "dashboard.h"
 #include "element_priv.h"
 #include "esp_log.h"
+#include "freertos/projdefs.h"
 
 #define AMP_DEVNULL_WRITER_EVENT_WAIT_TICKS pdMS_TO_TICKS(500)
 
@@ -14,32 +17,25 @@ struct devnull_writer {
     ringbuf_handle_t rb_in;
 };
 
+typedef enum {
+    DW_STATE_PLAYING,
+    DW_STATE_WAIT_NOTIFY,
+} amp_devnull_writer_state_t;
+
 typedef struct {
-    enum amp_state cached_state;
     TickType_t event_wait_ticks;
-    bool stop_requested;
-    bool waiting_eos_done;
+    bool stopped;
+    amp_devnull_writer_state_t state;
 } amp_devnull_writer_task_state_t;
 
 static bool amp_devnull_writer_process_notify(amp_devnull_writer_handle_t writer,
                                               amp_devnull_writer_task_state_t *state) {
     uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, state->event_wait_ticks) == pdTRUE) {
-        ESP_LOGD(TAG, "received notify: 0x%lx", notify);
-        if (notify & NOTIFY_VALUE_MASK_STATE) {
-            state->cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
-        }
-        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
-            state->waiting_eos_done = false;
-        }
+    EL_WAIT_NOTIFY(notify, state->event_wait_ticks) {
+        state->state = AMP_DASH_IS_PLAYING(writer->el_entry.dashboard) ? DW_STATE_PLAYING : DW_STATE_WAIT_NOTIFY;
+        EL_NOTIFY_ON_STREAM_NEW(notify) { ESP_LOGI(TAG, "receive STREAM NEW notify"); }
     }
-    bool should_wait;
-    if (state->waiting_eos_done) {
-        should_wait = true;
-    } else {
-        should_wait = state->cached_state != AMP_STATE_PLAYING;
-    }
-
+    bool should_wait = state->state == DW_STATE_WAIT_NOTIFY;
     if (should_wait) {
         if (state->event_wait_ticks <= 0) {
             state->event_wait_ticks = AMP_DEVNULL_WRITER_EVENT_WAIT_TICKS;
@@ -56,16 +52,15 @@ static void amp_devnull_writer_task(void *args) {
     assert(rb);
 
     amp_devnull_writer_task_state_t task_state = {
-        .cached_state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard),
         .event_wait_ticks = AMP_DEVNULL_WRITER_EVENT_WAIT_TICKS,
-        .stop_requested = false,
-        .waiting_eos_done = false,
+        .stopped = false,
+        .state = AMP_DASH_IS_PLAYING(writer->el_entry.dashboard) ? DW_STATE_PLAYING : DW_STATE_WAIT_NOTIFY,
     };
     TickType_t read_wait_ticks = pdMS_TO_TICKS(1000);
     const int read_size = 1024;
 
     while (true) {
-        if (task_state.stop_requested) {
+        if (task_state.stopped) {
             break;
         }
         if (amp_devnull_writer_process_notify(writer, &task_state)) {
@@ -73,15 +68,14 @@ static void amp_devnull_writer_task(void *args) {
         }
         int consumed = rb_read(rb, NULL, read_size, read_wait_ticks);
         if (RB_DONE == consumed) {
-            if (!task_state.waiting_eos_done) {
-                ESP_LOGI(TAG, "input ringbuf done");
-
-                task_state.waiting_eos_done = true;
-                vTaskDelay(pdMS_TO_TICKS(100));
-            }
+            ESP_LOGI(TAG, "input ringbuf done");
+            task_state.state = DW_STATE_WAIT_NOTIFY;
+            amp_element_notify_event((amp_element_handle_t)writer, NOTIFY_VALUE_MASK_STREAM_END);
             continue;
         } else if (RB_ABORT == consumed) {
             ESP_LOGW(TAG, "input ringbuf aborted");
+            task_state.state = DW_STATE_WAIT_NOTIFY;
+            amp_element_notify_event((amp_element_handle_t)writer, NOTIFY_VALUE_MASK_STREAM_ABORT);
             continue;
         } else if (RB_TIMEOUT == consumed) {
             ESP_LOGW(TAG, "read data from input ringbuf timeout");
@@ -91,6 +85,7 @@ static void amp_devnull_writer_task(void *args) {
             continue;
         } else {
             ESP_LOGD(TAG, "read from ringbuf: %d bytes", consumed);
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
 

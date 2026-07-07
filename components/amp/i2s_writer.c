@@ -193,12 +193,12 @@ static esp_err_t amp_i2s_writer_config_output_slot(amp_i2s_writer_handle_t write
 
 static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, struct amp_i2s_writer_task_state *state) {
     uint32_t notify = 0;
-    if (xTaskNotifyWait(0, ULONG_MAX, &notify, state->event_wait_ticks) == pdTRUE) {
-        ESP_LOGD(TAG, "received notify: 0x%lx", notify);
+    EL_WAIT_NOTIFY(notify, state->event_wait_ticks) {
         esp_err_t err;
+        enum amp_state s = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+        state->state = s == AMP_STATE_PLAYING ? IW_STATE_PLAYING : IW_STATE_WAIT_NOTIFY;
 
-        if (notify & NOTIFY_VALUE_MASK_STATE) {
-            enum amp_state s = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
+        EL_NOTIFY_ON_STATE(notify) {
             if (s == AMP_STATE_PAUSE && writer->chan_enable) {
                 if ((err = i2s_channel_disable(writer->tx_chan)) != ESP_OK) {
                     ESP_LOGW(TAG, "failed to disable tx channel: %d(%s)", err, esp_err_to_name(err));
@@ -210,14 +210,10 @@ static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, struct
                 }
                 writer->chan_enable = true;
             }
-            state->state = s == AMP_STATE_PLAYING ? IW_STATE_PLAYING : IW_STATE_WAIT_NOTIFY;
         }
-
-        if (notify & NOTIFY_VALUE_MASK_EOS_DONE) {
-            enum amp_state s = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
-            state->state = s == AMP_STATE_PLAYING ? IW_STATE_PLAYING : IW_STATE_WAIT_NOTIFY;
-        }
+        EL_NOTIFY_ON_STREAM_NEW(notify) { state->new_stream = true; }
     }
+
     bool should_wait = state->state == IW_STATE_WAIT_NOTIFY;
     if (should_wait) {
         if (state->event_wait_ticks <= 0) {
@@ -262,10 +258,13 @@ static void amp_i2s_writer_task(void *args) {
             ESP_LOGI(TAG, "input ringbuf done");
             task_state.new_stream = true;
             task_state.state = IW_STATE_WAIT_NOTIFY;
-            amp_element_notify_event((amp_element_handle_t)writer, NOTIFY_VALUE_MASK_EOS);
+            amp_element_notify_event((amp_element_handle_t)writer, NOTIFY_VALUE_MASK_STREAM_END);
             continue;
         } else if (RB_ABORT == data_size) {
             ESP_LOGW(TAG, "input ringbuf aborted");
+            task_state.new_stream = true;
+            task_state.state = IW_STATE_WAIT_NOTIFY;
+            amp_element_notify_event((amp_element_handle_t)writer, NOTIFY_VALUE_MASK_STREAM_ABORT);
             continue;
         } else if (RB_TIMEOUT == data_size) {
             ESP_LOGD(TAG, "read input ringbuf timeout");

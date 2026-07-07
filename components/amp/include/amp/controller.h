@@ -88,6 +88,10 @@ esp_err_t amp_controller_append_writer(amp_controller_handle_t controller, amp_e
 esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, amp_element_handle_t el,
                                           const amp_element_task_config_t *cfg);
 
+/*
+ *
+ */
+esp_err_t amp_controller_action_next(amp_controller_handle_t controller);
 /**
  * @brief Switch the controller to playing state
  *

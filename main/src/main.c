@@ -190,7 +190,10 @@ static void handle_volume_change_event(int volume, int diff) {
     }
 }
 
-static void next_btn_single_click_cb(void *args, void *user_data) { ui_post_input(UI_INPUT_NEXT); }
+static void next_btn_single_click_cb(void *args, void *user_data) {
+    ui_post_input(UI_INPUT_NEXT);
+    amp_controller_action_next(g_amp_player->controller);
+}
 
 static void prev_btn_single_click_cb(void *args, void *user_data) { ui_post_input(UI_INPUT_PREV); }
 

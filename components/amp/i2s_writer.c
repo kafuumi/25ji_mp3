@@ -194,6 +194,10 @@ static esp_err_t amp_i2s_writer_config_output_slot(amp_i2s_writer_handle_t write
 static bool amp_i2s_writer_process_notify(amp_i2s_writer_handle_t writer, struct amp_i2s_writer_task_state *state) {
     uint32_t notify = 0;
     EL_WAIT_NOTIFY(notify, state->event_wait_ticks) {
+        EL_NOTIFY_ON_STOP(notify) {
+            state->stopped = true;
+            return true;
+        }
         esp_err_t err;
         enum amp_state s = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard);
         state->state = s == AMP_STATE_PLAYING ? IW_STATE_PLAYING : IW_STATE_WAIT_NOTIFY;

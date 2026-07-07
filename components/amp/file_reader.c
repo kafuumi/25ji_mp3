@@ -44,6 +44,10 @@ static void amp_file_reader_set_output(void *args, ringbuf_handle_t rb) {
 static bool amp_file_reader_process_notify(amp_file_reader_handle_t reader, amp_file_reader_task_state_t *state) {
     uint32_t notify = 0;
     EL_WAIT_NOTIFY(notify, state->event_wait_ticks) {
+        EL_NOTIFY_ON_STOP(notify) {
+            state->stopped = true;
+            return true;
+        }
         EL_NOTIFY_ON_STATE(notify) {
             state->state = AMP_DASH_IS_PLAYING(reader->el_entry.dashboard) ? FR_STATE_PLAYING : FR_STATE_WAIT_NOTIFY;
         }

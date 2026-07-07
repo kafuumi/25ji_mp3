@@ -13,12 +13,14 @@
 #define NOTIFY_VALUE_MASK_STREAM_END (1 << 2)
 #define NOTIFY_VALUE_MASK_STREAM_ABORT (1 << 3)
 
+#define NOTIFY_VALUE_MASK_STOP 0xFFFFFF
+
 #define EL_WAIT_NOTIFY(notify, wait_time) if (xTaskNotifyWait(0, ULONG_MAX, &(notify), wait_time) == pdTRUE)
 #define EL_NOTIFY_ON_WHAT(notify, mask) if ((notify & mask))
 #define EL_NOTIFY_ON_STATE(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STATE)
 #define EL_NOTIFY_ON_STREAM_NEW(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STREAM_NEW)
 #define EL_NOTIFY_ON_STREAM_ABORT(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STREAM_ABORT)
-
+#define EL_NOTIFY_ON_STOP(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STOP)
 struct amp_element {
     STAILQ_ENTRY(amp_element) stailq_entry;
 

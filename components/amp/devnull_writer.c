@@ -32,6 +32,10 @@ static bool amp_devnull_writer_process_notify(amp_devnull_writer_handle_t writer
                                               amp_devnull_writer_task_state_t *state) {
     uint32_t notify = 0;
     EL_WAIT_NOTIFY(notify, state->event_wait_ticks) {
+        EL_NOTIFY_ON_STOP(notify) {
+            state->stopped = true;
+            return true;
+        }
         state->state = AMP_DASH_IS_PLAYING(writer->el_entry.dashboard) ? DW_STATE_PLAYING : DW_STATE_WAIT_NOTIFY;
         EL_NOTIFY_ON_STREAM_NEW(notify) { ESP_LOGI(TAG, "receive STREAM NEW notify"); }
     }

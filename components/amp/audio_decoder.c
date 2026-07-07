@@ -124,6 +124,10 @@ static bool amp_audio_decoder_process_notify(amp_audio_decoder_handle_t codec,
                                              struct amp_audio_decoder_task_state *task_state) {
     uint32_t notify = 0;
     EL_WAIT_NOTIFY(notify, task_state->event_wait_ticks) {
+        EL_NOTIFY_ON_STOP(notify) {
+            task_state->stopped = true;
+            return true;
+        }
         task_state->state = AMP_DASH_IS_PLAYING(codec->el_entry.dashboard) ? AD_STATE_PLAYING : AD_STATE_WAIT_NOTIFY;
         EL_NOTIFY_ON_STREAM_NEW(notify) {
             ESP_LOGI(TAG, "receive STREAM NEW notify");

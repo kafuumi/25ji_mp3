@@ -225,6 +225,10 @@ static void amp_controller_task_run(void *args) {
             ESP_LOGI(TAG, "controller task waiting for notify");
             continue;
         }
+        EL_NOTIFY_ON_STOP(notify) {
+            vTaskDelete(NULL);
+            return;
+        }
         EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STREAM_END) {
             ESP_LOGI(TAG, "received STREAM END event");
             // reset ringbuf
@@ -256,6 +260,29 @@ static void amp_controller_task_run(void *args) {
     }
 }
 
+void amp_controller_stop(amp_controller_handle_t controller) {
+    int size = 0;
+    amp_element_handle_t el;
+    // stop element
+    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+        if (el && el->task) {
+            if (xTaskNotify(el->task, NOTIFY_VALUE_MASK_STOP, eSetValueWithOverwrite) != pdTRUE) {
+                ESP_LOGW(TAG, "send STOP notify to %s fail", el->name);
+            }
+            el->task = NULL;
+            size++;
+        }
+    }
+    // stop self
+    if (controller->self) {
+        xTaskNotify(controller->self, NOTIFY_VALUE_MASK_STOP, eSetValueWithOverwrite);
+    }
+    controller->self = NULL;
+    if (size < controller->el_size) {
+        ESP_LOGW(TAG, "stopped element task size: %d, total size: %d", size, controller->el_size);
+    }
+}
+
 esp_err_t amp_controller_run(amp_controller_handle_t controller) {
     if (controller->self) {
         ESP_LOGE(TAG, "amp controller already running");
@@ -268,6 +295,13 @@ esp_err_t amp_controller_run(amp_controller_handle_t controller) {
     }
     controller->self = self;
     int size = 0;
+    // reset all ringbuf
+    for (int i = 0; i < controller->rb_list.size; ++i) {
+        ringbuf_handle_t rb = controller->rb_list.items[i];
+        if (rb) {
+            rb_reset(rb);
+        }
+    }
     // start all element
     amp_element_handle_t el;
     STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
@@ -420,12 +454,21 @@ cleanup:
 }
 
 void amp_controller_deinit(amp_controller_handle_t controller) {
-    if (!controller)
+    if (!controller) {
         return;
+    }
+    if (controller->self) {
+        ESP_LOGE(TAG, "controller not stop! call the amp_controller_stop firstly");
+        abort();
+    }
     amp_element_handle_t el;
     STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
-        if (el->intf && el->intf->deinit)
+        if (el->intf && el->intf->deinit) {
+            if (el->task) {
+                ESP_LOGW(TAG, "element %s task not stopped", el->name);
+            }
             el->intf->deinit(el);
+        }
     }
     for (size_t i = 0; i < (controller->rb_list).size; i++) {
         ringbuf_handle_t rb = controller->rb_list.items[i];

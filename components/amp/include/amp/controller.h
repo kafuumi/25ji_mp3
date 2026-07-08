@@ -22,6 +22,8 @@ typedef struct amp_controller *amp_controller_handle_t;
  */
 esp_err_t amp_controller_run(amp_controller_handle_t controller);
 
+void amp_controller_stop(amp_controller_handle_t controller);
+
 /**
  * @brief Allocate and initialize a controller
  *

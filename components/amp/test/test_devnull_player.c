@@ -101,4 +101,7 @@ TEST_CASE("devnull player", "[amp]") {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 _test_end:
+
+    amp_controller_stop(g_amp_controller);
+    amp_controller_deinit(g_amp_controller);
 }

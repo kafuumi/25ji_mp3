@@ -20,7 +20,7 @@
 #define EL_NOTIFY_ON_STATE(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STATE)
 #define EL_NOTIFY_ON_STREAM_NEW(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STREAM_NEW)
 #define EL_NOTIFY_ON_STREAM_ABORT(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STREAM_ABORT)
-#define EL_NOTIFY_ON_STOP(notify) EL_NOTIFY_ON_WHAT(notify, NOTIFY_VALUE_MASK_STOP)
+#define EL_NOTIFY_ON_STOP(notify) if (notify == NOTIFY_VALUE_MASK_STOP)
 struct amp_element {
     STAILQ_ENTRY(amp_element) stailq_entry;
 

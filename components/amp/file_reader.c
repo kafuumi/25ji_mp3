@@ -86,7 +86,7 @@ static bool amp_file_reader_process_notify(amp_file_reader_handle_t reader, amp_
 }
 
 static bool amp_file_reader_open_file(amp_file_reader_handle_t reader, amp_file_reader_task_state_t *state) {
-    amp_track_handle_t track = amp_playlist_next(reader->playlist);
+    amp_track_handle_t track = amp_playlist_get_current(reader->playlist);
     if (!track) {
         ESP_LOGW(TAG, "no more file to read");
         return false;

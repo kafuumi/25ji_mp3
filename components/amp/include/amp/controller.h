@@ -6,6 +6,11 @@
 #include <sys/queue.h>
 
 #include "amp/element.h"
+#include "amp/playlist.h"
+
+typedef struct {
+    amp_playlist_handle_t playlist;
+} amp_controller_cfg_t;
 
 /**
  * @brief representing a single controller handle
@@ -33,7 +38,7 @@ void amp_controller_stop(amp_controller_handle_t controller);
  *     - ESP_ERR_NO_MEM      Insufficient memory
  *     - ESP_FAIL            Failed to initialize internal resources
  */
-esp_err_t amp_controller_init(amp_controller_handle_t *controller);
+esp_err_t amp_controller_init(amp_controller_cfg_t *cfg, amp_controller_handle_t *controller);
 
 /**
  * @brief Deinitialize and free a controller

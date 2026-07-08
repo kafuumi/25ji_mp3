@@ -99,6 +99,7 @@ struct amp_controller {
     int el_size;
     amp_element_list_head_t el_list;
     rb_list_t rb_list;
+    amp_playlist_handle_t playlist;
 };
 
 static inline esp_err_t amp_controller_append(amp_controller_handle_t controller, amp_element_handle_t el,
@@ -385,6 +386,7 @@ esp_err_t amp_controller_action_next(amp_controller_handle_t controller) {
             }
         }
     }
+    amp_playlist_next(controller->playlist);
     return ESP_OK;
 }
 
@@ -425,7 +427,7 @@ esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, 
     }
 }
 
-esp_err_t amp_controller_init(amp_controller_handle_t *controller) {
+esp_err_t amp_controller_init(amp_controller_cfg_t *cfg, amp_controller_handle_t *controller) {
     amp_controller_handle_t c = amp_calloc(1, sizeof(struct amp_controller));
     STAILQ_INIT(&(c->el_list));
     RB_LIST_INIT(&(c->rb_list));
@@ -440,6 +442,7 @@ esp_err_t amp_controller_init(amp_controller_handle_t *controller) {
         goto cleanup;
     }
     c->dashboard = dashboard;
+    c->playlist = cfg->playlist;
 
     *controller = c;
     return ESP_OK;
@@ -479,6 +482,7 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
     ringbuf_handle_t rb;
     RB_LIST_FOREACH(rb, &controller->rb_list) { rb_destroy(rb); }
     RB_LIST_DEINIT(&controller->rb_list);
+    amp_playlist_deinit(controller->playlist);
 
     if (controller->dashboard) {
         amp_dashboard_deinit(controller->dashboard);

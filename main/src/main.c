@@ -94,7 +94,10 @@ static esp_err_t amp_player_init() {
     ESP_RETURN_ON_ERROR(err, TAG, "create amp i2s writer fail: %d", err);
 
     amp_controller_handle_t controller;
-    err = amp_controller_init(&controller);
+    amp_controller_cfg_t controller_cfg = {
+        .playlist = playlist,
+    };
+    err = amp_controller_init(&controller_cfg, &controller);
     ESP_RETURN_ON_ERROR(err, TAG, "create amp controller fail: %d", err);
 
     amp_element_task_config_t task_cfg = DEFAULT_ELEMENT_TASK_CFG();
@@ -115,6 +118,8 @@ static esp_err_t amp_player_init() {
 
     err = amp_controller_run(controller);
     ESP_RETURN_ON_ERROR(err, TAG, "run amp element fail: %d", err);
+
+    amp_playlist_preload(playlist);
 
     player->controller = controller;
     player->playlist = playlist;

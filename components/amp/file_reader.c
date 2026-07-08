@@ -34,6 +34,7 @@ typedef struct {
     amp_track_handle_t cur_track;
     amp_file_reader_state_t state;
     bool stopped;
+    bool rewrite;
 } amp_file_reader_task_state_t;
 
 static void amp_file_reader_set_output(void *args, ringbuf_handle_t rb) {
@@ -67,6 +68,8 @@ static bool amp_file_reader_process_notify(amp_file_reader_handle_t reader, amp_
                 state->cur_fd = 0;
                 state->cur_track = NULL;
             }
+            state->rewrite = false;
+            rb_abort(reader->rb);
             state->state = FR_STATE_WAIT_NOTIFY;
         }
     }
@@ -110,18 +113,20 @@ static void amp_file_reader_task(void *args) {
     ringbuf_handle_t rb = reader->rb;
     assert(rb);
 
-    size_t buf_size = 1024;
+    size_t buf_size = 4096;
     uint8_t *buf = amp_malloc(sizeof(uint8_t) * buf_size);
 
     amp_file_reader_task_state_t task_state = {
         .cur_fd = 0,
         .cur_track = NULL,
         .event_wait_ticks = AMP_FILE_READER_EVENT_WAIT_TICKS,
-        .state = AMP_DASH_LOAD_STATE(reader->el_entry.dashboard) == AMP_STATE_PLAYING ? FR_STATE_PLAYING
-                                                                                      : FR_STATE_WAIT_NOTIFY,
+        .state = AMP_DASH_IS_PLAYING(reader->el_entry.dashboard) ? FR_STATE_PLAYING : FR_STATE_WAIT_NOTIFY,
         .stopped = false,
+        .rewrite = false,
     };
 
+    ssize_t read_size = 0;
+    size_t rewrite_offset = 0;
     while (true) {
         if (task_state.stopped) {
             goto _task_end;
@@ -132,26 +137,41 @@ static void amp_file_reader_task(void *args) {
         if (task_state.cur_fd <= 0 && !amp_file_reader_open_file(reader, &task_state)) {
             continue;
         }
-        ssize_t read_size = read(task_state.cur_fd, buf, buf_size);
-        if (read_size < 0) {
-            ESP_LOGE(TAG, "failed to read file %s: %d(%s)", task_state.cur_track->path, errno, strerror(errno));
-            goto _task_end;
-        } else if (read_size == 0) {
-            ESP_LOGI(TAG, "reached EOF: %s", task_state.cur_track->path);
-            rb_done_write(rb);
-            task_state.state = FR_STATE_WAIT_NOTIFY;
-            task_state.cur_track = NULL;
-            close(task_state.cur_fd);
-            task_state.cur_fd = 0;
-            amp_element_notify_event((amp_element_handle_t)reader, NOTIFY_VALUE_MASK_STREAM_END);
-            continue;
+        if (!task_state.rewrite || !read_size) {
+            rewrite_offset = 0;
+            read_size = read(task_state.cur_fd, buf, buf_size);
+            if (read_size < 0) {
+                ESP_LOGE(TAG, "failed to read file %s: %d(%s)", task_state.cur_track->path, errno, strerror(errno));
+                goto _task_end;
+            } else if (read_size == 0) {
+                ESP_LOGI(TAG, "reached EOF: %s", task_state.cur_track->path);
+                rb_done_write(rb);
+                task_state.state = FR_STATE_WAIT_NOTIFY;
+                task_state.cur_track = NULL;
+                close(task_state.cur_fd);
+                task_state.cur_fd = 0;
+                amp_element_notify_event((amp_element_handle_t)reader, NOTIFY_VALUE_MASK_STREAM_END);
+                continue;
+            }
+            ESP_LOGD(TAG, "read file %s success, size: %d", task_state.cur_track->path, read_size);
+        } else {
+            ESP_LOGI(TAG, "rewrite data to ringbuf, offset: %lu, size: %lu", rewrite_offset, read_size);
         }
-        ESP_LOGD(TAG, "read file %s success, size: %d", task_state.cur_track->path, read_size);
 
         int write_size;
         int retry = 0;
     _retry_write:
-        write_size = rb_write(rb, (char *)buf, read_size, AMP_FILE_READER_WRITE_WAIT_TICKS);
+        write_size = rb_write(rb, (char *)buf + rewrite_offset, read_size, AMP_FILE_READER_WRITE_WAIT_TICKS);
+        bool is_unblock = RB_UNBLOCK == write_size || write_size < read_size;
+        if (is_unblock) {
+            if (write_size > 0) {
+                rewrite_offset += write_size;
+                read_size -= write_size;
+            }
+            task_state.rewrite = true;
+        } else {
+            task_state.rewrite = false;
+        }
         if (RB_DONE == write_size) {
             ESP_LOGW(TAG, "output ringbuf done write");
         } else if (RB_ABORT == write_size) {
@@ -161,10 +181,11 @@ static void amp_file_reader_task(void *args) {
             if (retry < AMP_FILE_READER_WRITE_RETRY_COUNT) {
                 ESP_LOGI(TAG, "write to ringbuf timeout, retry: %d", retry);
                 goto _retry_write;
-            } else {
-                ESP_LOGW(TAG, "write to ringbuf failed after %d retries", retry);
-                continue;
             }
+            ESP_LOGW(TAG, "write to ringbuf failed after %d retries", retry);
+            continue;
+        } else if (is_unblock) {
+            ESP_LOGI(TAG, "write ringbuf unblock, drop data, written: %d", write_size);
         } else if (write_size <= 0) {
             ESP_LOGE(TAG, "failed to write to ringbuf: %d", write_size);
         } else {

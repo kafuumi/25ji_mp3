@@ -38,6 +38,7 @@ extern "C" {
 #define RB_DONE (-2)
 #define RB_ABORT (-3)
 #define RB_TIMEOUT (-4)
+#define RB_UNBLOCK (-5)
 
 typedef struct ringbuf *ringbuf_handle_t;
 

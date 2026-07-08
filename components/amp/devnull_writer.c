@@ -84,6 +84,8 @@ static void amp_devnull_writer_task(void *args) {
         } else if (RB_TIMEOUT == consumed) {
             ESP_LOGW(TAG, "read data from input ringbuf timeout");
             continue;
+        } else if (RB_UNBLOCK == consumed) {
+            ESP_LOGI(TAG, "write ringbuf unblock, drop data, written: %d", consumed);
         } else if (consumed <= 0) {
             ESP_LOGW(TAG, "read data from input ringbuf fail");
             continue;

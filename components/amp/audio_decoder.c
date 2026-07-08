@@ -208,6 +208,8 @@ _read_loop:
             task_state.new_stream = true;
             task_state.first_dec = true;
             task_state.state = AD_STATE_WAIT_NOTIFY;
+            rb_abort(rb_out);
+            amp_element_notify_event((amp_element_handle_t)codec, NOTIFY_VALUE_MASK_STREAM_ABORT);
             continue;
         } else if (RB_TIMEOUT == in_size) {
             ESP_LOGW(TAG, "read input ringbuf timeout");
@@ -217,6 +219,8 @@ _read_loop:
             fail_counter++;
             ;
             continue;
+        } else if (RB_UNBLOCK == in_size || in_size < in_buf_size) {
+            ESP_LOGI(TAG, "write ringbuf unblock, drop data, written: %d", in_size);
         } else {
             ESP_LOGD(TAG, "read input ringbuf success, size: %d", in_size);
         }
@@ -285,14 +289,17 @@ _read_loop:
                     ESP_LOGW(TAG, "output ringbuf is set to write done");
                 } else if (RB_ABORT == write_size) {
                     ESP_LOGW(TAG, "output ringbuf is set to abort write");
+                    goto _read_loop;
                 } else if (RB_TIMEOUT == write_size) {
-                    ESP_LOGW(TAG, "write to output ringbuf timed out");
+                    ESP_LOGW(TAG, "write to output ringbuf timed out, retry count: %d", try_count);
                     /* retry */
                     try_count++;
                     if (try_count < 3) {
                         goto _try_write;
                     }
                     goto _read_loop;
+                } else if (RB_UNBLOCK == write_size || write_size < out_dec.decoded_size) {
+                    ESP_LOGI(TAG, "write ringbuf unblock, drop data, written: %d", write_size);
                 } else if (write_size <= 0) {
                     ESP_LOGW(TAG, "write to output ringbuf failed");
                     fail_counter++;

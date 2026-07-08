@@ -196,7 +196,7 @@ int rb_read(ringbuf_handle_t rb, char *buf, int buf_len, TickType_t ticks_to_wai
             }
             if (rb->unblock_reader_flag) {
                 // reader_unblock is nothing but forced timeout
-                ret_val = RB_TIMEOUT;
+                ret_val = RB_UNBLOCK;
                 rb_release(rb->lock);
                 goto read_err;
             }
@@ -282,7 +282,7 @@ int rb_write(ringbuf_handle_t rb, char *buf, int buf_len, TickType_t ticks_to_wa
                 goto write_err;
             }
             if (rb->unblock_writer_flag) {
-                ret_val = RB_TIMEOUT;
+                ret_val = RB_UNBLOCK;
                 rb_release(rb->lock);
                 goto write_err;
             }
@@ -391,7 +391,7 @@ esp_err_t rb_unblock_writer(ringbuf_handle_t rb) {
         return ESP_ERR_INVALID_ARG;
     }
     rb->unblock_writer_flag = true;
-    rb_release(rb->can_read);
+    rb_release(rb->can_write);
     return ESP_OK;
 }
 

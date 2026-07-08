@@ -303,6 +303,8 @@ static void amp_i2s_writer_task(void *args) {
         } else if (RB_TIMEOUT == data_size) {
             ESP_LOGD(TAG, "read input ringbuf timeout");
             continue;
+        } else if (RB_UNBLOCK == data_size || data_size < read_buf_size) {
+            ESP_LOGI(TAG, "write ringbuf unblock, drop data, written: %d", data_size);
         } else if (data_size <= 0) {
             ESP_LOGE(TAG, "read input ringbuf failed: %d", data_size);
             continue;

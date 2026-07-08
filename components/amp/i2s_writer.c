@@ -1,4 +1,4 @@
-#include <stdatomic.h>
+#include <math.h>
 
 #include "amp/controller.h"
 #include "esp_check.h"
@@ -19,6 +19,7 @@
 #define I2S_DEFAULT_SLOT_MODE I2S_SLOT_MODE_STEREO
 
 static const char *TAG = "i2s_writer";
+int32_t volume_table[99];
 
 struct i2s_writer {
     AMP_ELEMENT_ENTRY() el_entry;
@@ -26,7 +27,7 @@ struct i2s_writer {
     i2s_port_t i2s_port;
     ringbuf_handle_t rb_in;
     i2s_chan_handle_t tx_chan;
-    _Atomic uint8_t volume;
+    int32_t volume_gain;
     enum amp_audio_bit_width bit_width;
 };
 
@@ -48,39 +49,68 @@ struct amp_i2s_writer_task_state {
  * ############################################################
  */
 
-#define Q_FORMAT 16
+#define VOLUME_CHANGE_RANGE 60
+#define VOLUME_Q_FORMAT 14
+#define _INT24_MAX 0x7FFFFF
+#define _INT24_MIN (-0x800000)
 
-#define _APPLY_VOLUME(type, data, size, volume)                                                                        \
+#define _APPLY_VOLUME(type, data, size, gain)                                                                          \
     {                                                                                                                  \
         type *_data = (type *)data;                                                                                    \
-        /* const float _volume = (float)volume / 100; */                                                               \
         for (size_t i = 0; i < size; ++i) {                                                                            \
-            _data[i] = (type)((_data[i] * volume) >> Q_FORMAT);                                                        \
+            _data[i] = (type)(((typeof(gain))_data[i] * gain) >> VOLUME_Q_FORMAT);                                     \
         }                                                                                                              \
     }
 
+static void amp_i2s_writer_setup_volume_table() {
+    for (int i = 0; i < 99; i++) {
+        int range = VOLUME_CHANGE_RANGE; // (-60 dB, 0 dB)
+        float y = powf((float)i / 100.0, 2.0);
+        // gain = pow(10, dB/20)
+        int32_t gain = lrintf(powf(10.0, (-range + y * range) / 20.0) * (1 << VOLUME_Q_FORMAT));
+        volume_table[i] = gain;
+    }
+}
+
 static inline void amp_i2s_writer_apply_volume(amp_i2s_writer_handle_t writer, void *data, size_t size) {
-    int32_t volume = atomic_load(&writer->volume);
-    if (volume == 100) {
+    int32_t gain = writer->volume_gain;
+    if (gain == 1 << VOLUME_Q_FORMAT) {
         return;
-    } else if (volume == 0) {
+    } else if (gain == 0) {
         memset((void *)data, 0, size);
         return;
     }
-    volume = (volume << Q_FORMAT) / 100;
 
     switch (writer->bit_width) {
     case AUDIO_BIT_WIDTH_8BIT:
-        _APPLY_VOLUME(int8_t, data, size, volume);
+        _APPLY_VOLUME(int8_t, data, size, gain);
         break;
     case AUDIO_BIT_WIDTH_16BIT:
-        _APPLY_VOLUME(int16_t, data, size >> 1, volume);
+        _APPLY_VOLUME(int16_t, data, size >> 1, gain);
         break;
     case AUDIO_BIT_WIDTH_24BIT:
+        do {
+            uint8_t *_data = (uint8_t *)data;
+            for (size_t i = 0; i + 2 < size; i += 3) {
+                int32_t raw = (_data[i]) | (_data[i + 1] << 8) | (_data[i + 2] << 16);
+                if (raw & 0x00800000) {
+                    raw |= ~0x00FFFFFF;
+                }
+                raw = (int32_t)(((int64_t)raw * gain) >> VOLUME_Q_FORMAT);
+                if (raw > _INT24_MAX) {
+                    raw = _INT24_MAX;
+                } else if (raw < _INT24_MIN) {
+                    raw = _INT24_MIN;
+                }
+                _data[i] = (uint8_t)(raw & 0xFF);
+                _data[i + 1] = (uint8_t)((raw >> 8) & 0xFF);
+                _data[i + 2] = (uint8_t)((raw >> 16) & 0xFF);
+            }
+        } while (0);
         break;
     case AUDIO_BIT_WIDTH_32BIT:
         do {
-            int64_t vol = volume;
+            int64_t vol = gain;
             _APPLY_VOLUME(int32_t, data, size >> 2, vol);
         } while (0);
         break;
@@ -335,7 +365,8 @@ esp_err_t amp_i2s_writer_init(amp_i2s_writer_cfg_t *cfg, amp_i2s_writer_handle_t
         return ESP_ERR_NO_MEM;
     }
     w->i2s_port = cfg->i2s_port;
-    w->volume = cfg->volume;
+    amp_i2s_writer_setup_volume_table();
+    amp_i2s_writer_set_volume(w, cfg->volume);
     esp_err_t err = amp_i2s_writer_driver_init(w, &cfg->gpio_cfg);
     if (ESP_OK != err) {
         amp_free(w);
@@ -371,5 +402,17 @@ void amp_i2s_writer_deinit(amp_i2s_writer_handle_t writer) {
 const amp_element_interface_t *amp_i2s_writer_get_element_interface(void) { return &amp_i2s_writer_element_interface; }
 
 void amp_i2s_writer_set_volume(amp_i2s_writer_handle_t writer, uint8_t volume) {
-    atomic_store(&writer->volume, volume);
+    if (volume > 100) {
+        ESP_LOGW(TAG, "volume value (%d) is invalid", volume);
+        return;
+    }
+    int32_t gain;
+    if (volume == 100) {
+        gain = 1 << VOLUME_Q_FORMAT;
+    } else if (volume == 0) {
+        gain = 0;
+    } else {
+        gain = volume_table[volume - 1];
+    }
+    writer->volume_gain = gain;
 }

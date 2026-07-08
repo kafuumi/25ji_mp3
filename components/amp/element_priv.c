@@ -16,3 +16,10 @@ void amp_element_notify_event(amp_element_handle_t el, uint32_t notify_value) {
         }
     }
 }
+
+void amp_element_task_done(amp_element_handle_t el) {
+    if (el && el->done_sem) {
+        ESP_LOGI(TAG, "notify element %s task done", el->name);
+        xSemaphoreGive(el->done_sem);
+    }
+}

@@ -37,7 +37,6 @@ struct amp_audio_detail {
 
 struct amp_dashboard {
     _Atomic enum amp_state state;
-    SemaphoreHandle_t done_count;
     /* media info */
     struct {
         volatile const char *name;

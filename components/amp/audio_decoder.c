@@ -319,6 +319,7 @@ _task_end:
         amp_free(in_buf);
     if (out_buf)
         amp_free(out_buf);
+    amp_element_task_done((amp_element_handle_t)codec);
     vTaskDelete(NULL);
 }
 

@@ -92,7 +92,7 @@ static void amp_devnull_writer_task(void *args) {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
-
+    amp_element_task_done((amp_element_handle_t)writer);
     vTaskDelete(NULL);
 }
 

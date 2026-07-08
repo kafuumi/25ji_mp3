@@ -176,6 +176,7 @@ _task_end:
     if (buf) {
         amp_free(buf);
     }
+    amp_element_task_done((amp_element_handle_t)reader);
     vTaskDelete(NULL);
 }
 

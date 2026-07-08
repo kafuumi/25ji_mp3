@@ -49,7 +49,7 @@ struct amp_i2s_writer_task_state {
  * ############################################################
  */
 
-#define VOLUME_CHANGE_RANGE 60
+#define VOLUME_CHANGE_RANGE 50
 #define VOLUME_Q_FORMAT 14
 #define _INT24_MAX 0x7FFFFF
 #define _INT24_MIN (-0x800000)
@@ -336,6 +336,7 @@ static void amp_i2s_writer_task(void *args) {
     }
 
     amp_free(read_buf);
+    amp_element_task_done((amp_element_handle_t)writer);
     vTaskDelete(NULL);
 }
 

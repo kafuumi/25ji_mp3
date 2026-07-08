@@ -37,17 +37,21 @@ typedef struct {
     ringbuf_handle_t *items;
 } rb_list_t;
 
-static inline void rb_list_init(rb_list_t *rb) {
-    rb->size = rb->cap = 0;
-    rb->items = NULL;
-}
+#define RB_LIST_INIT(rb)                                                                                               \
+    do {                                                                                                               \
+        (rb)->size = (rb)->cap = 0;                                                                                    \
+        (rb)->items = NULL;                                                                                            \
+    } while (0)
 
-static inline void rb_list_deinit(rb_list_t *rb) {
-    if (rb->items) {
-        free(rb->items);
-        rb->items = NULL;
-    }
-}
+#define RB_LIST_DEINIT(rb)                                                                                             \
+    do {                                                                                                               \
+        if ((rb)->items) {                                                                                             \
+            free((rb)->items);                                                                                         \
+            (rb)->items = NULL;                                                                                        \
+        }                                                                                                              \
+    } while (0)
+
+#define RB_LIST_FOREACH(var, rb) for (size_t _idx = 0; (_idx < (rb)->size) && (var = (rb)->items[_idx], true); ++_idx)
 
 static inline esp_err_t rb_list_realloc(rb_list_t *rb, size_t require_size) {
     if (rb->cap < require_size) {
@@ -76,10 +80,7 @@ static inline esp_err_t rb_list_append(rb_list_t *rb_list, ringbuf_handle_t rb) 
 }
 
 static inline ringbuf_handle_t rb_list_at(rb_list_t *rb, int idx) {
-    if (idx < 0 || idx >= rb->size) {
-        return NULL;
-    }
-    return rb->items[idx];
+    return (idx >= 0 && idx < (rb)->size) ? (rb)->items[idx] : NULL;
 }
 
 static inline ringbuf_handle_t rb_list_last(rb_list_t *rb) { return rb_list_at(rb, rb->size - 1); }
@@ -110,9 +111,11 @@ static inline esp_err_t amp_controller_append(amp_controller_handle_t controller
     el->affinity_core = cfg->affinity_core;
     el->task_priority = cfg->task_priority;
     el->intf = intf;
-    el->dashboard = controller->dashboard;
     el->task = NULL;
+    el->controller_task = NULL;
+    el->dashboard = controller->dashboard;
     el->event_bus = controller->event_bus;
+    el->done_sem = xSemaphoreCreateBinary();
 
     ringbuf_handle_t rb;
     bool append_rb = false;
@@ -265,12 +268,21 @@ void amp_controller_stop(amp_controller_handle_t controller) {
     amp_element_handle_t el;
     // stop element
     STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
-        if (el && el->task) {
+        if (el->task) {
             if (xTaskNotify(el->task, NOTIFY_VALUE_MASK_STOP, eSetValueWithOverwrite) != pdTRUE) {
                 ESP_LOGW(TAG, "send STOP notify to %s fail", el->name);
             }
             el->task = NULL;
             size++;
+        }
+    }
+    ringbuf_handle_t rb;
+    RB_LIST_FOREACH(rb, &controller->rb_list) { rb_abort(rb); }
+    // wait
+    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+        if (el->done_sem) {
+            // TODO: timeout
+            xSemaphoreTake(el->done_sem, portMAX_DELAY);
         }
     }
     // stop self
@@ -314,9 +326,6 @@ esp_err_t amp_controller_run(amp_controller_handle_t controller) {
         ESP_LOGI(TAG, "created task for %s", el->name);
         size++;
     }
-    if ((controller->dashboard->done_count = xSemaphoreCreateCounting(size, 0)) == NULL) {
-        return ESP_FAIL;
-    }
     controller->el_size = size;
     return ESP_OK;
 }
@@ -334,7 +343,7 @@ enum amp_controller_action_id {
 static inline void amp_controller_send_notify(amp_controller_handle_t controller, uint32_t notify) {
     amp_element_handle_t el;
     STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
-        if (el && el->task) {
+        if (el->task) {
             if (xTaskNotify(el->task, notify, eSetBits) != pdTRUE) {
                 ESP_LOGW(TAG, "failed to notify %s of state change", el->name);
             }
@@ -377,12 +386,8 @@ esp_err_t amp_controller_action_next(amp_controller_handle_t controller) {
         }
     }
     // abort all
-    for (size_t i = 0; i < (controller->rb_list).size; ++i) {
-        ringbuf_handle_t rb = controller->rb_list.items[i];
-        if (rb) {
-            rb_abort(rb);
-        }
-    }
+    ringbuf_handle_t rb;
+    RB_LIST_FOREACH(rb, &controller->rb_list) { rb_abort(rb); }
     return ESP_OK;
 }
 
@@ -397,12 +402,8 @@ esp_err_t amp_controller_action_play(amp_controller_handle_t controller) {
 esp_err_t amp_controller_action_pause(amp_controller_handle_t controller) {
     CONTROLLER_ACTION_DO(controller, AMP_STATE_PAUSE, AMP_CONTROLLER_ACTION_PAUSE, TAG, "amp already PAUSED state");
     // unblock write
-    for (size_t i = 0; i < (controller->rb_list).size; ++i) {
-        ringbuf_handle_t rb = controller->rb_list.items[i];
-        if (rb) {
-            rb_unblock_writer(rb);
-        }
-    }
+    ringbuf_handle_t rb;
+    RB_LIST_FOREACH(rb, &controller->rb_list) { rb_unblock_writer(rb); }
 }
 
 esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, bool *to_play) {
@@ -427,7 +428,7 @@ esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, 
 esp_err_t amp_controller_init(amp_controller_handle_t *controller) {
     amp_controller_handle_t c = amp_calloc(1, sizeof(struct amp_controller));
     STAILQ_INIT(&(c->el_list));
-    rb_list_init(&(c->rb_list));
+    RB_LIST_INIT(&(c->rb_list));
     esp_err_t err = amp_controller_setup_event(c);
     if (ESP_OK != err) {
         goto cleanup;
@@ -461,8 +462,13 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
         ESP_LOGE(TAG, "controller not stop! call the amp_controller_stop firstly");
         abort();
     }
-    amp_element_handle_t el;
-    STAILQ_FOREACH(el, &controller->el_list, stailq_entry) {
+    amp_element_handle_t el, tel;
+    STAILQ_FOREACH_SAFE(el, &controller->el_list, stailq_entry, tel) {
+        if (el->done_sem) {
+            vSemaphoreDelete(el->done_sem);
+        }
+        free(el->name);
+
         if (el->intf && el->intf->deinit) {
             if (el->task) {
                 ESP_LOGW(TAG, "element %s task not stopped", el->name);
@@ -470,12 +476,9 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
             el->intf->deinit(el);
         }
     }
-    for (size_t i = 0; i < (controller->rb_list).size; i++) {
-        ringbuf_handle_t rb = controller->rb_list.items[i];
-        if (rb)
-            rb_destroy(rb);
-    }
-    rb_list_deinit(&controller->rb_list);
+    ringbuf_handle_t rb;
+    RB_LIST_FOREACH(rb, &controller->rb_list) { rb_destroy(rb); }
+    RB_LIST_DEINIT(&controller->rb_list);
 
     if (controller->dashboard) {
         amp_dashboard_deinit(controller->dashboard);
@@ -483,6 +486,5 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
     if (controller->event_bus) {
         esp_event_loop_delete(controller->event_bus);
     }
-
     amp_free(controller);
 }

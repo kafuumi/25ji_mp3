@@ -76,6 +76,16 @@ static esp_err_t create_player() {
     return err;
 }
 
+TEST_CASE("null player init and deinit", "[amp]") {
+    esp_err_t err = create_player();
+    TEST_ASSERT_EQUAL(ESP_OK, err);
+
+    amp_controller_action_play(g_amp_controller);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    amp_controller_stop(g_amp_controller);
+    amp_controller_deinit(g_amp_controller);
+}
+
 TEST_CASE("devnull player", "[amp]") {
     esp_err_t err = create_player();
     TEST_ASSERT_EQUAL(ESP_OK, err);
@@ -101,7 +111,6 @@ TEST_CASE("devnull player", "[amp]") {
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 _test_end:
-
     amp_controller_stop(g_amp_controller);
     amp_controller_deinit(g_amp_controller);
 }

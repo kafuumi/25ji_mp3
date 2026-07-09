@@ -91,7 +91,7 @@ static inline void amp_i2s_writer_apply_volume(amp_i2s_writer_handle_t writer, v
     case AUDIO_BIT_WIDTH_24BIT:
         do {
             uint8_t *_data = (uint8_t *)data;
-            for (size_t i = 0; i + 2 < size; i += 3) {
+            for (size_t i = 0; (i + 2) < size; i += 3) {
                 int32_t raw = (_data[i]) | (_data[i + 1] << 8) | (_data[i + 2] << 16);
                 if (raw & 0x00800000) {
                     raw |= ~0x00FFFFFF;
@@ -168,6 +168,7 @@ static esp_err_t amp_i2s_writer_driver_init(amp_i2s_writer_handle_t ctx, amp_i2s
                 .ws = gpio_cfg->ws,
             },
     };
+    std_cfg.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_768;
     err = i2s_channel_init_std_mode(tx_chan, &std_cfg);
     if (ESP_OK != err) {
         ESP_LOGE(TAG, "init i2s channel fail: " FMT_ESP_ERR(err));
@@ -202,11 +203,13 @@ static esp_err_t amp_i2s_writer_config_output_slot(amp_i2s_writer_handle_t write
 
     if (detail.sample_rate > 0) {
         i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(detail.sample_rate);
+        clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_768;
         err = i2s_channel_reconfig_std_clock(chan, &clk_cfg);
         if (ESP_OK != err) {
             return err;
         }
     }
+
     if (detail.bit_width >= 0) {
         i2s_std_slot_config_t slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(detail.bit_width, detail.channel);
         err = i2s_channel_reconfig_std_slot(chan, &slot_cfg);
@@ -214,6 +217,7 @@ static esp_err_t amp_i2s_writer_config_output_slot(amp_i2s_writer_handle_t write
             return err;
         }
     }
+
     writer->bit_width = detail.bit_width;
     if (writer->chan_enable) {
         i2s_channel_enable(writer->tx_chan);
@@ -270,7 +274,7 @@ static void amp_i2s_writer_task(void *args) {
     ringbuf_handle_t rb = writer->rb_in;
     assert(rb);
 
-    size_t read_buf_size = 1024;
+    size_t read_buf_size = 1020;
     uint8_t *read_buf = amp_malloc(sizeof(uint8_t) * read_buf_size);
     struct amp_i2s_writer_task_state task_state = {
         .state = AMP_DASH_LOAD_STATE(writer->el_entry.dashboard) == AMP_STATE_PLAYING ? IW_STATE_PLAYING

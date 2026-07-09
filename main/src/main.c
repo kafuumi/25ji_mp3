@@ -40,8 +40,8 @@ static button_handle_t *g_button_list = NULL;
 
 #define DEFAULT_ELEMENT_TASK_CFG()                                                                                     \
     {                                                                                                                  \
-        .output_rb_size = 1024,                                                                                        \
-        .stack_size = 4096,                                                                                            \
+        .output_rb_size = 8192,                                                                                        \
+        .stack_size = 8192,                                                                                            \
         .affinity_core = AMP_TASK_CPU_CORE,                                                                            \
         .task_priority = AMP_TASK_DEFAULT_PRIORITY,                                                                    \
     }

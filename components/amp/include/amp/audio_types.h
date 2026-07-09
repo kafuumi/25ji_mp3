@@ -18,6 +18,7 @@ enum amp_audio_media_type {
     AUDIO_MEDIA_TYPE_MP3,
     AUDIO_MEDIA_TYPE_AAC,
     AUDIO_MEDIA_TYPE_FLAC,
+    AUDIO_MEDIA_TYPE_OGG,
 };
 
 #endif // _AMP_AUDIO_H_

@@ -93,8 +93,10 @@ TEST_CASE("devnull player", "[amp]") {
     esp_err_t err = create_player();
     TEST_ASSERT_EQUAL(ESP_OK, err);
 
+    vTaskDelay(pdMS_TO_TICKS(1000));
     amp_controller_action_play(g_amp_controller);
 
+    vTaskDelay(pdMS_TO_TICKS(3000));
     while (true) {
         int input = getc(stdin);
         switch (input) {

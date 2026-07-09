@@ -16,6 +16,7 @@
 #define FILE_TYPE_NAME_MP3 ".mp3"
 #define FILE_TYPE_NAME_AAC ".aac"
 #define FILE_TYPE_NAME_FLAC ".flac"
+#define FILE_TYPE_NAME_OGG ".ogg"
 
 #define AUDIO_FILE_NODE_CREATE(var, err, type, on_fail)                                                                \
     do {                                                                                                               \
@@ -99,6 +100,8 @@ static esp_err_t amp_playlist_load(amp_playlist_handle_t playlist, const char *d
                     AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_AAC, break;);
                 } else if (strcasecmp(ext, FILE_TYPE_NAME_FLAC) == 0) {
                     AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_FLAC, break;);
+                } else if (strcasecmp(ext, FILE_TYPE_NAME_OGG) == 0) {
+                    AUDIO_FILE_NODE_CREATE(node, err, AUDIO_MEDIA_TYPE_OGG, break;);
                 } else {
                     ESP_LOGW(TAG, "skipping non-audio file: %s", full_path);
                 }

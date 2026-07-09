@@ -1,4 +1,5 @@
 
+#include "esp_audio_codec_version.h"
 #include "esp_audio_simple_dec.h"
 #include "esp_audio_simple_dec_default.h"
 #include "esp_log.h"
@@ -39,6 +40,9 @@ static bool amp_audio_decoder_setup(amp_audio_decoder_handle_t codec) {
         break;
     case AUDIO_MEDIA_TYPE_FLAC:
         dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_FLAC;
+        break;
+    case AUDIO_MEDIA_TYPE_OGG:
+        dec_type = ESP_AUDIO_SIMPLE_DEC_TYPE_OGG;
         break;
     }
 
@@ -355,9 +359,25 @@ const amp_element_interface_t *amp_audio_decoder_get_element_interface() {
     return &amp_audio_decoder_element_interface;
 }
 
+volatile static bool is_registeied = false;
+
+esp_err_t audio_codec_register() {
+    if (!is_registeied) {
+        ESP_LOGI(TAG, "esp audio codec version: %s", esp_audio_codec_get_version());
+        esp_audio_err_t err;
+        bool ok = (((err = esp_audio_dec_register_default()) == ESP_AUDIO_ERR_OK) &&
+                   (err = esp_audio_simple_dec_register_default() == ESP_AUDIO_ERR_OK));
+        if (ok) {
+            is_registeied = true;
+            return ESP_OK;
+        }
+        return err;
+    }
+    return ESP_OK;
+}
+
 esp_err_t amp_audio_decoder_init(amp_audio_decoder_handle_t *codec) {
-    esp_audio_simple_dec_register_default();
-    esp_audio_dec_register_default();
+    audio_codec_register();
     amp_audio_decoder_handle_t c = amp_calloc(1, sizeof(struct audio_codec));
     if (!c)
         return ESP_ERR_NO_MEM;
@@ -376,20 +396,4 @@ void amp_audio_decoder_deinit(amp_audio_decoder_handle_t codec) {
         esp_audio_simple_dec_close(codec->decoder);
     }
     amp_free(codec);
-}
-
-volatile static bool is_registeied = false;
-
-esp_err_t audio_codec_register() {
-    if (!is_registeied) {
-        esp_audio_err_t err;
-        bool ok = (((err = esp_audio_dec_register_default()) == ESP_AUDIO_ERR_OK) &&
-                   (err = esp_audio_simple_dec_register_default() == ESP_AUDIO_ERR_OK));
-        if (ok) {
-            is_registeied = true;
-            return ESP_OK;
-        }
-        return err;
-    }
-    return ESP_OK;
 }

@@ -54,8 +54,11 @@ static amp_i2s_writer_handle_t create_i2s_writer(uint8_t volume) {
 
 static amp_controller_handle_t create_controller() {
     amp_controller_handle_t controller;
+    amp_controller_cfg_t cfg = {
+        .playlist = NULL,
+    };
     esp_err_t err;
-    ELEMENT_CREATE(err = amp_controller_init(&controller), controller);
+    ELEMENT_CREATE(err = amp_controller_init(&cfg, &controller), controller);
     return controller;
 }
 

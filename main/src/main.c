@@ -200,7 +200,12 @@ static void next_btn_single_click_cb(void *args, void *user_data) {
     amp_controller_action_next(g_amp_player->controller);
 }
 
-static void prev_btn_single_click_cb(void *args, void *user_data) { ui_post_input(UI_INPUT_PREV); }
+static void prev_btn_single_click_cb(void *args, void *user_data) {
+    ui_post_input(UI_INPUT_PREV);
+    if (g_amp_player) {
+        amp_controller_action_prev(g_amp_player->controller);
+    }
+}
 
 static void any_btn_single_click_cb(void *args, void *user_data) {
     ESP_LOGI(TAG, "any button clicked");

@@ -146,6 +146,24 @@ amp_track_handle_t amp_playlist_get_current(amp_playlist_handle_t playlist) {
     return &playlist->cur->track;
 }
 
+amp_track_handle_t amp_playlist_prev(amp_playlist_handle_t playlist) {
+    esp_err_t err;
+    if ((err = amp_playlist_preload(playlist)) != ESP_OK) {
+        return NULL;
+    }
+    if (playlist->cur == NULL) {
+        // empty
+        return NULL;
+    }
+    struct amp_track_node_t *cur = playlist->cur;
+    playlist->cur = TAILQ_PREV(cur, amp_track_head_t, tailq_entry);
+    if (playlist->cur == NULL) {
+        // end
+        playlist->cur = TAILQ_LAST(&playlist->track_list, amp_track_head_t);
+    }
+    return &cur->track;
+}
+
 amp_track_handle_t amp_playlist_next(amp_playlist_handle_t playlist) {
     esp_err_t err;
     if ((err = amp_playlist_preload(playlist)) != ESP_OK) {

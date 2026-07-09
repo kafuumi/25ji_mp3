@@ -50,7 +50,10 @@ static esp_err_t create_player() {
     ESP_RETURN_ON_ERROR(err, TAG, "create amp null writer fail: %d", err);
 
     amp_controller_handle_t controller;
-    err = amp_controller_init(&controller);
+    amp_controller_cfg_t controller_cfg = {
+        .playlist = playlist,
+    };
+    err = amp_controller_init(&controller_cfg, &controller);
     ESP_RETURN_ON_ERROR(err, TAG, "create amp controller fail: %d", err);
 
     amp_element_task_config_t task_cfg = DEFAULT_ELEMENT_TASK_CFG();
@@ -99,11 +102,15 @@ TEST_CASE("devnull player", "[amp]") {
             printf("play next\n");
             amp_controller_action_next(g_amp_controller);
             break;
+        case 'p':
+            printf("play prev\n");
+            amp_controller_action_prev(g_amp_controller);
+            break;
         case 'q':
             printf("exit\n");
             amp_controller_action_pause(g_amp_controller);
             goto _test_end;
-        case 'p':
+        case 's':
             printf("toggle play\n");
             amp_controller_action_toggle_play(g_amp_controller, NULL);
             break;

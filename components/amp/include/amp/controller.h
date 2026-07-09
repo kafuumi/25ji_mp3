@@ -99,6 +99,9 @@ esp_err_t amp_controller_append_processor(amp_controller_handle_t controller, am
  *
  */
 esp_err_t amp_controller_action_next(amp_controller_handle_t controller);
+
+esp_err_t amp_controller_action_prev(amp_controller_handle_t controller);
+
 /**
  * @brief Switch the controller to playing state
  *

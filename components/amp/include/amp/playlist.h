@@ -26,6 +26,8 @@ esp_err_t amp_playlist_preload(amp_playlist_handle_t playlist);
 
 amp_track_handle_t amp_playlist_get_current(amp_playlist_handle_t playlist);
 
+amp_track_handle_t amp_playlist_prev(amp_playlist_handle_t);
+
 amp_track_handle_t amp_playlist_next(amp_playlist_handle_t);
 
 esp_err_t amp_playlist_init(amp_playlist_cfg_t *, amp_playlist_handle_t *);

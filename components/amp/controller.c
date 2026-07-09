@@ -377,6 +377,19 @@ static inline esp_err_t amp_controller_send_action_event(amp_controller_handle_t
     return ESP_OK;
 }
 
+esp_err_t amp_controller_action_prev(amp_controller_handle_t controller) {
+    amp_element_handle_t el;
+    STAILQ_FOREACH(el, &(controller->el_list), stailq_entry) {
+        if (el->role == AMP_ELEMENT_READER) {
+            if (xTaskNotify(el->task, NOTIFY_VALUE_MASK_STREAM_ABORT, eSetBits) != pdTRUE) {
+                ESP_LOGW(TAG, "failed to notify %s of state change", el->name);
+            }
+        }
+    }
+    amp_playlist_prev(controller->playlist);
+    return ESP_OK;
+}
+
 esp_err_t amp_controller_action_next(amp_controller_handle_t controller) {
     amp_element_handle_t el;
     STAILQ_FOREACH(el, &(controller->el_list), stailq_entry) {
@@ -467,15 +480,15 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
     }
     amp_element_handle_t el, tel;
     STAILQ_FOREACH_SAFE(el, &controller->el_list, stailq_entry, tel) {
+        if (el->task) {
+            ESP_LOGW(TAG, "element %s task not stopped", el->name);
+        }
         if (el->done_sem) {
             vSemaphoreDelete(el->done_sem);
         }
         free(el->name);
 
         if (el->intf && el->intf->deinit) {
-            if (el->task) {
-                ESP_LOGW(TAG, "element %s task not stopped", el->name);
-            }
             el->intf->deinit(el);
         }
     }

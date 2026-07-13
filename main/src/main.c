@@ -33,7 +33,6 @@ typedef struct {
 static amp_player_ctx_t *g_amp_player = NULL;
 static i2c_master_bus_handle_t g_i2c_bus = NULL;
 static TaskHandle_t g_sensor_task = NULL;
-static bool g_flag_playing = false;
 static button_handle_t *g_button_list = NULL;
 
 //////////////////////////////////////////////////////////////////////
@@ -193,6 +192,10 @@ static void handle_volume_change_event(int volume, int diff) {
     if (g_amp_player) {
         amp_i2s_writer_set_volume(g_amp_player->i2s_writer, volume);
     }
+    ui_main_info_t ui_info = {
+        .vol = volume + 1,
+    };
+    ui_main_set_info(&ui_info);
 }
 
 static void next_btn_single_click_cb(void *args, void *user_data) {
@@ -209,14 +212,16 @@ static void prev_btn_single_click_cb(void *args, void *user_data) {
 
 static void any_btn_single_click_cb(void *args, void *user_data) {
     ESP_LOGI(TAG, "any button clicked");
-    if (g_flag_playing) {
-        bsp_audio_mute(true);
-        amp_controller_action_pause(g_amp_player->controller);
+    bool is_play;
+    amp_controller_action_toggle_play(g_amp_player->controller, &is_play);
+    bsp_audio_mute(!is_play);
+    ui_main_info_t ui_info = {0};
+    if (is_play) {
+        ui_info.state = UI_MAIN_STATE_PLAY;
     } else {
-        bsp_audio_mute(false);
-        amp_controller_action_play(g_amp_player->controller);
+        ui_info.state = UI_MAIN_STATE_PAUSE;
     }
-    g_flag_playing = !g_flag_playing;
+    ui_main_set_info(&ui_info);
 }
 
 static void button_deinit() {

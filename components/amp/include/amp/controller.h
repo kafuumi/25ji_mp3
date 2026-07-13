@@ -147,4 +147,7 @@ esp_err_t amp_controller_action_reset(amp_controller_handle_t controller);
  */
 esp_err_t amp_controller_action_toggle_play(amp_controller_handle_t controller, bool *to_play);
 
+esp_err_t amp_controller_register_event(amp_controller_handle_t controller, enum amp_event_report_id id,
+                                        esp_event_handler_t handler);
+
 #endif // _AMP_CONTROLLER_H_

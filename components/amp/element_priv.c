@@ -23,3 +23,7 @@ void amp_element_task_done(amp_element_handle_t el) {
         xSemaphoreGive(el->done_sem);
     }
 }
+
+void amp_element_report_event(amp_element_handle_t el, enum amp_event_report_id id, amp_event_msg_t *msg) {
+    esp_event_post_to(el->event_bus, AMP_EVENT_REPORT, id, msg, sizeof(amp_event_msg_t), 0);
+}

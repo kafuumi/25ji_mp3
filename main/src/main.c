@@ -4,6 +4,7 @@
 #include "esp_err.h"
 #include "iot_button.h"
 
+#include "amp/amp_event.h"
 #include "amp/audio_decoder.h"
 #include "amp/controller.h"
 #include "amp/file_reader.h"
@@ -44,6 +45,41 @@ static button_handle_t *g_button_list = NULL;
         .affinity_core = AMP_TASK_CPU_CORE,                                                                            \
         .task_priority = AMP_TASK_DEFAULT_PRIORITY,                                                                    \
     }
+
+static void amp_event_handler(void *args, esp_event_base_t base_id, int32_t evt_id, void *event) {
+    amp_event_msg_t *evt_msg = event;
+    ui_main_info_t info = {0};
+    switch (evt_id) {
+    case AMP_EVENT_REPORT_STREAM_METADATA:
+        switch (evt_msg->media_type) {
+        case AUDIO_MEDIA_TYPE_AAC:
+            info.media_type = UI_MAIN_MEDIA_TYPE_AAC;
+            break;
+        case AUDIO_MEDIA_TYPE_MP3:
+            info.media_type = UI_MAIN_MEDIA_TYPE_MP3;
+            break;
+        case AUDIO_MEDIA_TYPE_FLAC:
+            info.media_type = UI_MAIN_MEDIA_TYPE_FLAC;
+            break;
+        case AUDIO_MEDIA_TYPE_OGG:
+            info.media_type = UI_MAIN_MEDIA_TYPE_OGG;
+            break;
+        case AUDIO_MEDIA_TYPE_NONE:
+            info.media_type = NULL;
+            return;
+        }
+        info.title = evt_msg->audio_name;
+        break;
+    case AMP_EVENT_REPORT_STREAM_DETAIL:
+        info.bit_width = evt_msg->bit_width;
+        info.channel = evt_msg->channel;
+        info.sample_rate = evt_msg->sample_rate;
+        break;
+    default:
+        return;
+    }
+    ui_main_set_info(&info);
+}
 
 static esp_err_t amp_player_init() {
     // set to mute
@@ -120,6 +156,8 @@ static esp_err_t amp_player_init() {
 
     amp_playlist_preload(playlist);
 
+    amp_controller_register_event(controller, AMP_EVENT_REPORT_ANY, amp_event_handler);
+
     player->controller = controller;
     player->playlist = playlist;
     player->file_reader = file_reader;
@@ -192,10 +230,7 @@ static void handle_volume_change_event(int volume, int diff) {
     if (g_amp_player) {
         amp_i2s_writer_set_volume(g_amp_player->i2s_writer, volume);
     }
-    ui_main_info_t ui_info = {
-        .vol = volume + 1,
-    };
-    ui_main_set_info(&ui_info);
+    ui_main_set_volume_info(volume);
 }
 
 static void next_btn_single_click_cb(void *args, void *user_data) {

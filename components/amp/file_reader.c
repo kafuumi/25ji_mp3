@@ -101,10 +101,15 @@ static bool amp_file_reader_open_file(amp_file_reader_handle_t reader, amp_file_
         ESP_LOGE(TAG, "failed to open file %s: %d(%s)", name, errno, strerror(errno));
         return false;
     }
-    ESP_LOGI(TAG, "opened file %s (fd=%d, type=%d)", name, fd, track->media_type);
+    ESP_LOGI(TAG, "opened file %s (fd=%d, type=%d)", track->name, fd, track->media_type);
     AMP_DASH_SET_MEDIA_TYPE(reader->el_entry.dashboard, track->media_type);
     state->cur_fd = fd;
     state->cur_track = track;
+    amp_event_msg_t msg = {
+        .media_type = track->media_type,
+        .audio_name = track->name,
+    };
+    amp_element_report_event((amp_element_handle_t)reader, AMP_EVENT_REPORT_STREAM_METADATA, &msg);
     return true;
 }
 

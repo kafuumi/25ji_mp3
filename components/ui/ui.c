@@ -25,7 +25,7 @@ typedef struct {
     const char *media_type;
     int vol;
     const char *title;
-    float sample_rate;
+    int sample_rate;
     int channel;
     int bit_width;
 } MainUIContext_t;
@@ -103,7 +103,7 @@ static inline void ui_main_form_draw() {
         {
             str_buf[0] = '\0';
             pos_y += ui_main->padding * 2;
-            u8g2_SetFont(u8g2, u8g2_font_wqy12_t_gb2312a);
+            u8g2_SetFont(u8g2, u8g2_font_wqy12_t_gb2312);
             font_size = UI_FONT_SIZE(u8g2);
             int draw_y = pos_y + u8g2_GetAscent(u8g2);
             if (ui_main->title == NULL || strlen(ui_main->title) == 0) {
@@ -123,7 +123,8 @@ static inline void ui_main_form_draw() {
             if (ui_main->sample_rate == 0) {
                 u8g2_DrawStr(u8g2, pos_x, draw_y, "- kHz");
             } else {
-                snprintf(str_buf, STR_BUT_SIZE, "%.f kHz", ui_main->sample_rate);
+                float rate = (float)ui_main->sample_rate / 1000.0f;
+                snprintf(str_buf, STR_BUT_SIZE, "%.1f kHz", rate);
                 u8g2_DrawStr(u8g2, pos_x, draw_y, str_buf);
             }
             str_buf[0] = '\0';
@@ -163,7 +164,7 @@ void ui_main_set_info(ui_main_info_t *info) {
         ui_main->media_type = info->media_type;
     }
     if (info->vol > 0) {
-        ui_main->vol = info->vol-1;
+        ui_main->vol = info->vol - 1;
     }
     if (info->title) {
         ui_main->title = info->title;
@@ -181,6 +182,13 @@ void ui_main_set_info(ui_main_info_t *info) {
 
         xTaskNotify(g_ui_ctx->mui_task, DRAW_TASK_NOTIFY_MASK_REDRAW, eSetBits);
     }
+}
+
+void ui_main_set_volume_info(int volume) {
+    ui_main_info_t info = {
+        .vol = volume + 1,
+    };
+    ui_main_set_info(&info);
 }
 
 esp_err_t ui_post_input(ui_input_event_t event) {

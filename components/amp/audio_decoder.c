@@ -101,11 +101,12 @@ static bool amp_audio_decoder_get_media_info(amp_audio_decoder_handle_t decoder)
     if (detail.bit_width != media_info.bits_per_sample || detail.sample_rate != media_info.sample_rate ||
         detail.channel != media_info.channel) {
         /* post event */
-        err = esp_event_post_to(decoder->el_entry.event_bus, AMP_EVENT_REPORT, AMP_EVENT_REPORT_AUDIO_DETAIL, 0, 0,
-                                AMP_AUDIO_DECODER_POST_EVENT_WAIT_TICKS);
-        if (ESP_OK != err) {
-            ESP_LOGW(TAG, "post AUDIO DETAIL event fail: %d(%s)", err, esp_err_to_name(err));
-        }
+        amp_event_msg_t msg = {
+            .bit_width = media_info.bits_per_sample,
+            .channel = media_info.channel,
+            .sample_rate = media_info.sample_rate,
+        };
+        amp_element_report_event((amp_element_handle_t)decoder, AMP_EVENT_REPORT_STREAM_DETAIL, &msg);
     }
 
     return true;

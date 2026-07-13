@@ -110,6 +110,7 @@ static esp_err_t amp_playlist_load(amp_playlist_handle_t playlist, const char *d
             }
         }
         if (node) {
+            node->track.name = sdscat(sdsempty(), dir_entry->d_name);
             node->track.path = sdsdup(full_path);
             node->track.is_dir = is_dir;
             ESP_LOGI(TAG, "loaded entry: %s (dir=%d)", full_path, is_dir);
@@ -204,14 +205,11 @@ void amp_playlist_deinit(amp_playlist_handle_t playlist) {
     struct amp_track_node_t *node;
     TAILQ_FOREACH(node, &playlist->track_list, tailq_entry) {
         if (node) {
-            if (node->track.path) {
-                sdsfree((sds)node->track.path);
-            }
+            sdsfree((sds)node->track.path);
+            sdsfree((sds)node->track.name);
             amp_free(node);
         }
     }
-    if (playlist->base) {
-        sdsfree(playlist->base);
-    }
+    sdsfree(playlist->base);
     amp_free(playlist);
 }

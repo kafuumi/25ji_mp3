@@ -6,6 +6,8 @@
 
 #define UI_MAIN_MEDIA_TYPE_MP3 "MP3"
 #define UI_MAIN_MEDIA_TYPE_FLAC "FLAC"
+#define UI_MAIN_MEDIA_TYPE_OGG "OGG"
+#define UI_MAIN_MEDIA_TYPE_AAC "AAC"
 
 typedef struct {
     int task_size;
@@ -38,11 +40,13 @@ typedef struct {
     const char *media_type;
     int vol;
     const char *title;
-    float sample_rate;
+    int sample_rate;
     int channel;
     int bit_width;
 } ui_main_info_t;
 
 void ui_main_set_info(ui_main_info_t *info);
+
+void ui_main_set_volume_info(int volume);
 
 #endif // INC_UI_H

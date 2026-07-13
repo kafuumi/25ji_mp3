@@ -5,6 +5,7 @@
 
 #include "esp_event.h"
 
+#include "amp/amp_event.h"
 #include "amp/element.h"
 #include "dashboard.h"
 
@@ -42,5 +43,7 @@ struct amp_element {
 void amp_element_notify_event(amp_element_handle_t el, uint32_t notify_value);
 
 void amp_element_task_done(amp_element_handle_t el);
+
+void amp_element_report_event(amp_element_handle_t el, enum amp_event_report_id id, amp_event_msg_t *msg);
 
 #endif // _AMP_ELEMENT_PRIV_H_

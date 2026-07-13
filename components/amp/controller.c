@@ -505,3 +505,8 @@ void amp_controller_deinit(amp_controller_handle_t controller) {
     }
     amp_free(controller);
 }
+
+esp_err_t amp_controller_register_event(amp_controller_handle_t controller, enum amp_event_report_id  id, esp_event_handler_t handler) {
+    esp_event_handler_register_with(controller->event_bus, AMP_EVENT_REPORT, id, handler, NULL);
+    return ESP_OK;
+}

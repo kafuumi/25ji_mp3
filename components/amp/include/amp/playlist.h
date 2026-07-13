@@ -9,6 +9,7 @@
 
 struct amp_track_t {
     const char *path;
+    const char *name;
     bool is_dir;
     enum amp_audio_media_type media_type;
 };
